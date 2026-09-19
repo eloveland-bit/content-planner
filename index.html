@@ -1,721 +1,963 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Content Planner</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Condensed:wght@500;600;700&display=swap" rel="stylesheet">
-<script src="https://accounts.google.com/gsi/client" async defer></script>
-<style>
-:root {
-  --paper: #F5F6F2;
-  --panel: #FFFFFF;
-  --ink: #1B2622;
-  --muted: #5E6B66;
-  --rule: #D6DCD6;
-  --pine: #1E5A47;
-  --pine-soft: #E3EEE8;
-  --amber: #9A6414;
-  --amber-soft: #FBF0DA;
-  --slate: #3E5A6E;
-  --slate-soft: #E6EDF2;
-  --focus: #2F7DE1;
-  --display: 'Barlow Condensed', 'Arial Narrow', 'Helvetica Neue', Arial, sans-serif;
-  --body: 'Barlow', 'Helvetica Neue', Arial, sans-serif;
-  color-scheme: light;
-}
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    --paper: #121916; --panel: #18211D; --ink: #E6ECE8; --muted: #9AA8A2; --rule: #2A3631;
-    --pine: #6FC2A0; --pine-soft: #1C2E27; --amber: #E8B04B; --amber-soft: #2E2615;
-    --slate: #9CC0DA; --slate-soft: #1B2833; --focus: #7FB2FF; color-scheme: dark;
-  }
-}
-:root[data-theme="dark"] {
-  --paper: #121916; --panel: #18211D; --ink: #E6ECE8; --muted: #9AA8A2; --rule: #2A3631;
-  --pine: #6FC2A0; --pine-soft: #1C2E27; --amber: #E8B04B; --amber-soft: #2E2615;
-  --slate: #9CC0DA; --slate-soft: #1B2833; --focus: #7FB2FF; color-scheme: dark;
-}
+/**
+ * CONTENT PLANNER BACKEND  (Mosquito Squad Plus, v1)
+ *
+ * What it does, once a week:
+ *   1. Reads the Pest Activity Calendar Google Sheet (source of truth for timing)
+ *   2. Crawls all seven market blog indexes, following pagination
+ *   3. Pulls Local Falcon trend data and self-checks SoLV against raw grid points
+ *   4. Picks one topic + one area per market, with 2 alternates and tech questions
+ *   5. Writes content-planner-data.json to Drive (the web app reads this file)
+ *
+ * Run buildPlan() by hand, or run setupWeeklyTrigger() once to automate it.
+ * The Local Falcon key lives in Script Properties as LF_API_KEY. Never paste it here.
+ */
 
-* { box-sizing: border-box; }
-html, body { margin: 0; }
-body {
-  background: var(--paper);
-  color: var(--ink);
-  font: 16px/1.5 var(--body);
-  -webkit-font-smoothing: antialiased;
-}
-a { color: var(--pine); }
-button, select, input { font: inherit; color: inherit; }
-:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
-.wrap { max-width: 1040px; margin: 0 auto; padding: 0 20px; }
+// ===================== SETTINGS YOU MAY EDIT =====================
 
-/* Header */
-header.top {
-  border-bottom: 1px solid var(--rule);
-  background: var(--paper);
-  position: sticky; top: 0; z-index: 5;
-}
-.top .wrap { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding-top: 14px; padding-bottom: 14px; flex-wrap: wrap; }
-.brand { font: 600 15px/1 var(--body); color: var(--muted); }
-.tools { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-.btn {
-  border: 1px solid var(--rule); background: var(--panel); border-radius: 6px;
-  padding: 7px 12px; cursor: pointer; font-size: 14px; font-weight: 500; line-height: 1.2;
-}
-.btn:hover { border-color: var(--muted); }
-.btn.primary { background: var(--pine); border-color: var(--pine); color: var(--paper); }
-.btn.quiet { background: transparent; }
-.btn[aria-pressed="true"] { background: var(--pine-soft); border-color: var(--pine); color: var(--pine); }
+var CONFIG = {
+  SHEET_ID: '17FHQsL20jFASodkU7iXFq-Kwn1MizkrVwwN-woZSQ4k',
+  OUTPUT_FILE: 'content-planner-data.json',
+  HISTORY_FILE: 'content-planner-history.json',
 
-/* Week title */
-.week { padding: 36px 0 8px; }
-.week h1 {
-  font: 700 clamp(40px, 7vw, 72px)/0.95 var(--display);
-  letter-spacing: -0.01em; margin: 0;
-}
-.week p { color: var(--muted); margin: 10px 0 0; max-width: 64ch; }
+  // Monday decision -> content live 11 to 17 days later
+  ASSIGN_MIN_DAYS: 11,
+  ASSIGN_MAX_DAYS: 17,
+  LATE_LOOKBACK_DAYS: 21,     // a missed Start Posting date stays "catch-up" this long
+  REPEAT_BLOCK_WEEKS: 4,      // don't re-propose the same pest in the same market for this long
+  MAX_MARKETS_PER_PEST: 2,    // spread topics: one pest can be the pick in at most this many markets per week
+  PRIORITY_TAB: 'Monthly Priority',
+  DECISIONS_FILE: 'content-planner-decisions.json',   // written by the web app (Posted marks, baseline)
+  POSTDATE_FILE: 'content-planner-postdates.json',    // cache of blog publish dates and titles
+  GBP_REPEAT_WEEKS: 2,        // Falcon post can't reuse a keyword/pest or area from the previous 2 weeks
+  BASELINE_COUNT: 5,          // newest blogs shown for the one-time "already promoted?" checklist
+  PRIMARY_BOOST: 20,          // ALL CAPS item on the Monthly Priority tab
+  LISTED_BOOST: 8,            // lowercase item on the Monthly Priority tab
+  UNLISTED_PENALTY: 10,       // in season, but not on this month's priority list
 
-.notices { margin: 20px 0 0; padding: 0; list-style: none; }
-.notices li {
-  border-left: 3px solid var(--amber); background: var(--amber-soft);
-  padding: 8px 12px; margin-bottom: 6px; font-size: 14px; border-radius: 0 4px 4px 0;
-}
-.bar { display: flex; gap: 8px; flex-wrap: wrap; margin: 24px 0 8px; }
-
-/* Market ledger */
-.market {
-  display: grid; grid-template-columns: 180px 1fr; gap: 24px;
-  border-top: 1px solid var(--rule); padding: 28px 0;
-}
-.market:last-of-type { border-bottom: 1px solid var(--rule); }
-.rail h2 { font: 600 24px/1.1 var(--display); margin: 0 0 6px; }
-.rail .facts { font-size: 13px; color: var(--muted); line-height: 1.6; }
-.rail .flag { color: var(--amber); font-weight: 600; }
-.market.skipped .main { opacity: 0.45; }
-
-.pick { font: 700 clamp(30px, 4.4vw, 44px)/1.02 var(--display); margin: 0; }
-.meta { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin: 10px 0 12px; font-size: 14px; color: var(--muted); }
-.tag { font-size: 13px; font-weight: 600; padding: 2px 8px; border-radius: 4px; }
-.tag.due { background: var(--pine-soft); color: var(--pine); }
-.tag.late { background: var(--amber-soft); color: var(--amber); }
-.tag.season { background: var(--slate-soft); color: var(--slate); }
-.tag.locked { background: var(--pine); color: var(--paper); }
-
-.why { margin: 0 0 14px; padding: 0; list-style: none; max-width: 70ch; }
-.why li { padding-left: 14px; position: relative; font-size: 15px; }
-.why li::before { content: ''; position: absolute; left: 0; top: 0.7em; width: 5px; height: 5px; border-radius: 50%; background: var(--muted); }
-
-.line {
-  background: var(--panel); border: 1px solid var(--rule); border-radius: 6px;
-  padding: 12px 14px; font-size: 15px; margin: 0 0 12px; max-width: 76ch;
-}
-.caution { border-left: 3px solid var(--amber); padding: 6px 12px; background: var(--amber-soft); font-size: 14px; margin: 0 0 12px; max-width: 76ch; }
-.controls { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
-.controls label { font-size: 14px; color: var(--muted); display: flex; gap: 6px; align-items: center; }
-.controls select { border: 1px solid var(--rule); background: var(--panel); border-radius: 6px; padding: 6px 8px; font-size: 14px; }
-
-.alts { margin-top: 14px; font-size: 14px; color: var(--muted); display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
-.alts .btn { font-size: 13px; padding: 5px 10px; }
-
-details { margin-top: 14px; font-size: 14px; }
-summary { cursor: pointer; color: var(--muted); font-weight: 500; }
-details .inner { padding: 10px 0 0; display: grid; gap: 10px; max-width: 76ch; }
-details h4 { margin: 0 0 2px; font-size: 13px; font-weight: 600; color: var(--muted); }
-details ul { margin: 0; padding-left: 18px; }
-.kw { width: 100%; border-collapse: collapse; font-size: 13px; }
-.kw td, .kw th { text-align: left; padding: 4px 8px 4px 0; border-bottom: 1px solid var(--rule); }
-.kw th { color: var(--muted); font-weight: 600; }
-.down { color: var(--amber); }
-
-/* GBP */
-.gbp { margin-top: 22px; padding-top: 18px; border-top: 1px dashed var(--rule); }
-.gbp h3 { font: 600 20px/1.1 var(--display); margin: 0 0 12px; }
-.gpost { display: grid; grid-template-columns: 120px 1fr; gap: 12px; padding: 10px 0; }
-.gpost + .gpost { border-top: 1px solid var(--rule); }
-.gkind { font-size: 13px; font-weight: 600; color: var(--muted); padding-top: 2px; }
-.gtitle { font-weight: 600; margin: 0 0 4px; }
-.gsub { font-size: 14px; color: var(--muted); margin: 0 0 8px; max-width: 72ch; }
-.tagline { font-size: 13px; background: var(--panel); border: 1px solid var(--rule); border-radius: 4px; padding: 2px 8px; display: inline-block; margin: 0 6px 8px 0; word-break: break-all; }
-.gpost.done .gtitle { text-decoration: line-through; color: var(--muted); }
-.baseline { background: var(--slate-soft); border-radius: 8px; padding: 12px 14px; margin-bottom: 12px; font-size: 14px; }
-.baseline p { margin: 0 0 8px; }
-.baseline label { display: flex; gap: 8px; align-items: flex-start; margin: 4px 0; }
-.track { font-size: 13px; color: var(--muted); margin: 8px 0 0; }
-@media (max-width: 720px) { .gpost { grid-template-columns: 1fr; gap: 4px; } }
-
-/* Field team */
-.section-title { font: 700 32px/1 var(--display); margin: 48px 0 6px; }
-.section-note { color: var(--muted); margin: 0 0 18px; max-width: 64ch; }
-.people { display: grid; gap: 12px; }
-.person { background: var(--panel); border: 1px solid var(--rule); border-radius: 8px; padding: 14px 16px; }
-.person-head { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
-.person-head input { border: 1px solid var(--rule); background: var(--paper); border-radius: 6px; padding: 6px 10px; min-width: 200px; }
-.checks { display: flex; gap: 6px 14px; flex-wrap: wrap; font-size: 14px; }
-.checks label { display: flex; gap: 5px; align-items: center; }
-.ask { white-space: pre-wrap; font-size: 14px; background: var(--paper); border: 1px solid var(--rule); border-radius: 6px; padding: 10px 12px; margin: 12px 0 8px; }
-
-footer { color: var(--muted); font-size: 13px; padding: 40px 0 60px; }
-
-/* Signed-out / states */
-.gate { min-height: 70vh; display: grid; place-content: center; text-align: left; max-width: 520px; margin: 0 auto; padding: 0 20px; }
-.gate h1 { font: 700 56px/0.95 var(--display); margin: 0 0 12px; }
-.gate p { color: var(--muted); margin: 0 0 20px; }
-.hidden { display: none !important; }
-.toast {
-  position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
-  background: var(--ink); color: var(--paper); padding: 8px 14px; border-radius: 6px; font-size: 14px;
-  opacity: 0; transition: opacity .2s; pointer-events: none;
-}
-.toast.show { opacity: 1; }
-@media (prefers-reduced-motion: reduce) { .toast { transition: none; } }
-
-@media (max-width: 720px) {
-  .market { grid-template-columns: 1fr; gap: 10px; padding: 22px 0; }
-  .rail { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; flex-wrap: wrap; }
-  .rail .facts { text-align: right; }
-}
-</style>
-</head>
-<body>
-
-<header class="top">
-  <div class="wrap">
-    <div class="brand">Content Planner</div>
-    <div class="tools">
-      <span id="saveState" class="brand" aria-live="polite"></span>
-      <button class="btn quiet" id="themeBtn" type="button">Theme</button>
-      <button class="btn quiet hidden" id="reloadBtn" type="button">Reload data</button>
-      <button class="btn quiet hidden" id="signOutBtn" type="button">Sign out</button>
-    </div>
-  </div>
-</header>
-
-<section class="gate" id="gate">
-  <h1>Monday picks</h1>
-  <p id="gateMsg">Sign in with the Google account that runs the planner backend. This page reads the weekly plan from your Drive and saves your choices back to it.</p>
-  <div><button class="btn primary" id="signInBtn" type="button">Sign in with Google</button></div>
-</section>
-
-<main class="wrap hidden" id="app">
-  <section class="week">
-    <h1 id="weekTitle"></h1>
-    <p id="weekSub"></p>
-    <ul class="notices" id="notices"></ul>
-    <div class="bar">
-      <button class="btn primary" id="copyLines" type="button">Copy production lines</button>
-      <button class="btn" id="copyGbp" type="button">Copy GBP briefs</button>
-      <button class="btn" id="copyAskAll" type="button">Copy all field questions</button>
-    </div>
-  </section>
-
-  <div id="markets"></div>
-
-  <h2 class="section-title">Field team</h2>
-  <p class="section-note">Add each person you ask for field input and check the markets they cover. Their questions stay grouped so nobody gets more than their own markets.</p>
-  <div class="people" id="people"></div>
-  <div class="bar"><button class="btn" id="addPerson" type="button">Add person</button></div>
-  <div id="unassigned"></div>
-
-  <footer id="foot"></footer>
-</main>
-
-<div class="toast" id="toast" role="status"></div>
-
-<script>
-/* ================= SETTINGS ================= */
-const CLIENT_ID = '788046954081-1ojin1jscuit4vujd76qcinm3hjsgiq4.apps.googleusercontent.com';
-const SCOPES = 'https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/drive.file';
-const DATA_FILE = 'content-planner-data.json';
-const DECISIONS_FILE = 'content-planner-decisions.json';
-
-/* ================= STATE ================= */
-let token = null, tokenClient = null, pendingAuth = null;
-let plan = null;
-let decisions = { weeks: {}, team: [], promoted: {}, baselineDone: {} };
-let decisionsId = null;
-let saveTimer = null;
-
-const $ = (id) => document.getElementById(id);
-const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-
-/* ================= THEME ================= */
-function applyTheme(t) {
-  if (t) document.documentElement.setAttribute('data-theme', t);
-  else document.documentElement.removeAttribute('data-theme');
-  $('themeBtn').textContent = t === 'dark' ? 'Dark' : t === 'light' ? 'Light' : 'Auto theme';
-}
-let theme = null;
-try { theme = localStorage.getItem('cp-theme'); } catch (e) {}
-applyTheme(theme);
-$('themeBtn').onclick = () => {
-  theme = theme === null ? 'light' : theme === 'light' ? 'dark' : null;
-  try { theme ? localStorage.setItem('cp-theme', theme) : localStorage.removeItem('cp-theme'); } catch (e) {}
-  applyTheme(theme);
+  MARKETS: [
+    { tab: 'Chattanooga', city: 'chattanooga', state: 'tn', region: 'south', slug: 'chattanooga-nwgeorgia', falcon: 'Chattanooga',
+      areas: ['Northshore|North Shore', 'Hixson', 'Ooltewah', 'East Brainerd', 'Signal Mountain'],
+      priorities: ['Mosquitoes', 'Ticks', 'Termites'] },
+    { tab: 'Knoxville', city: 'knoxville', state: 'tn', region: 'south', slug: 'knoxville', falcon: 'Knoxville',
+      areas: ['Farragut', 'Concord', 'Karns', 'Oak Ridge', 'Maryville'],
+      priorities: ['Mosquitoes', 'Ticks', 'Termites'] },
+    { tab: 'Huntsville', city: 'huntsville', state: 'al', region: 'south', slug: 'huntsville', falcon: 'Huntsville',
+      areas: ['Madison', 'Owens Cross Roads|Owens Crossroads', 'Jones Valley', 'Westbury'],
+      priorities: ['Mosquitoes', 'Fleas', 'Ticks'] },
+    { tab: 'Birmingham', city: 'birmingham', state: 'al', region: 'south', slug: 'greater-birmingham', falcon: 'Birmingham',
+      areas: ['Homewood', 'Vestavia Hills'],
+      priorities: ['Mosquitoes', 'Ticks', 'Rodents'] },
+    { tab: 'Cincinnati', city: 'cincinnati', state: 'oh', region: 'ohio', slug: 'cincinnati', falcon: 'Cincinnati',
+      areas: ['Hyde Park', 'Madeira', 'Indian Hill', 'Loveland', 'Blue Ash'],
+      priorities: ['Mosquitoes', 'Ants (general)', 'Ticks'] },
+    { tab: 'Dayton', city: 'dayton', state: 'oh', region: 'ohio', slug: 'dayton', falcon: 'Dayton',
+      areas: ['Centerville', 'Springboro', 'Kettering'],
+      priorities: ['Mosquitoes', 'Wasps/Hornets/YJ', 'Ants (general)'] },
+    { tab: 'Northern Kentucky', city: '', state: 'ky', region: 'ohio', slug: 'northern-kentucky', falcon: 'Northern Kentucky',
+      areas: ['Covington', 'Fort Wright', 'Independence'],
+      priorities: ['Mosquitoes', 'Ticks', 'Rodents', 'Stink Bugs'] }
+  ]
 };
 
-/* ================= AUTH ================= */
-function initAuth() {
-  if (!window.google || !google.accounts || !google.accounts.oauth2) { setTimeout(initAuth, 200); return; }
-  tokenClient = google.accounts.oauth2.initTokenClient({
-    client_id: CLIENT_ID,
-    scope: SCOPES,
-    callback: (resp) => {
-      if (resp.error) { gate('Sign-in did not complete (' + resp.error + '). Try again.'); return; }
-      token = resp.access_token;
-      if (pendingAuth) { const p = pendingAuth; pendingAuth = null; p.resolve(); }
-      else start();
-    }
-  });
-}
-initAuth();
-
-$('signInBtn').onclick = () => tokenClient && tokenClient.requestAccessToken({ prompt: '' });
-$('signOutBtn').onclick = () => {
-  if (token) google.accounts.oauth2.revoke(token, () => {});
-  token = null; plan = null;
-  $('app').classList.add('hidden'); $('reloadBtn').classList.add('hidden'); $('signOutBtn').classList.add('hidden');
-  gate('Signed out.');
+// How each sheet row is recognized in a blog URL slug.
+// any: slug must contain at least one. not: slug must contain none.
+var PEST_MATCH = {
+  'Mosquitoes':             { any: ['mosquito'] },
+  'Ticks':                  { any: ['tick', 'ticks', 'lyme', 'alpha-gal'] },
+  'Ants (general)':         { any: ['ant', 'ants', 'carpenter-ant'], not: ['fire-ant', 'fire-ants'] },
+  'Fire Ants':              { any: ['fire-ant', 'fire-ants'] },
+  'Termites':               { any: ['termite', 'termites'] },
+  'Fleas':                  { any: ['flea', 'fleas'] },
+  'Chiggers':               { any: ['chigger', 'chiggers'] },
+  'Clover Mites':           { any: ['clover-mite', 'clover-mites'] },
+  'Cockroaches':            { any: ['roach', 'roaches', 'cockroach', 'cockroaches'] },
+  'Flies (house/filth)':    { any: ['fly', 'flies', 'house-fly', 'house-flies'], not: ['cluster', 'lanternfly', 'lanternflies', 'black-fly', 'black-flies', 'butterfly', 'fireflies'] },
+  'Flies (cluster)':        { any: ['cluster-fly', 'cluster-flies'] },
+  'Gnats (buffalo/black)':  { any: ['buffalo-gnat', 'buffalo-gnats', 'black-fly', 'black-flies', 'gnat', 'gnats'], not: ['fungus'] },
+  'Gnats (fungus, indoor)': { any: ['fungus-gnat', 'fungus-gnats', 'gnat', 'gnats'], not: ['buffalo', 'black-fly'] },
+  'No-See-Ums':             { any: ['no-see-um', 'no-see-ums', 'noseeum', 'noseeums', 'biting-midge', 'biting-midges'] },
+  'Rodents':                { any: ['rodent', 'rodents', 'mice', 'mouse', 'rat', 'rats'] },
+  'Scorpions':              { any: ['scorpion', 'scorpions'] },
+  'Elm Seed Bugs':          { any: ['elm-seed'] },
+  'Spiders':                { any: ['spider', 'spiders', 'recluse', 'black-widow'] },
+  'Spotted Lanternfly':     { any: ['lanternfly', 'lanternflies'] },
+  'Stink Bugs':             { any: ['stink-bug', 'stink-bugs', 'stinkbug', 'stinkbugs'] },
+  'Boxelder Bugs':          { any: ['boxelder', 'box-elder'] },
+  'Armyworms':              { any: ['armyworm', 'armyworms', 'army-worm', 'army-worms'] },
+  'Wasps/Hornets/YJ':       { any: ['wasp', 'wasps', 'hornet', 'hornets', 'yellow-jacket', 'yellow-jackets', 'yellowjacket', 'yellowjackets'] }
 };
-$('reloadBtn').onclick = () => start();
 
-function gate(msg) {
-  $('gate').classList.remove('hidden');
-  if (msg) $('gateMsg').textContent = msg;
-}
+// Plain-word pest names for briefs and tech questions
+var PEST_WORDS = {
+  'Mosquitoes': 'mosquitoes', 'Ticks': 'ticks', 'Ants (general)': 'ants', 'Fire Ants': 'fire ants',
+  'Termites': 'termites', 'Fleas': 'fleas', 'Chiggers': 'chiggers', 'Clover Mites': 'clover mites',
+  'Cockroaches': 'roaches', 'Flies (house/filth)': 'house flies', 'Flies (cluster)': 'cluster flies',
+  'Gnats (buffalo/black)': 'buffalo gnats', 'Gnats (fungus, indoor)': 'fungus gnats',
+  'No-See-Ums': 'no-see-ums', 'Rodents': 'mice and rats', 'Scorpions': 'scorpions',
+  'Elm Seed Bugs': 'elm seed bugs', 'Spiders': 'spiders', 'Spotted Lanternfly': 'spotted lanternflies',
+  'Stink Bugs': 'stink bugs', 'Boxelder Bugs': 'boxelder bugs', 'Wasps/Hornets/YJ': 'wasps and hornets',
+  'Armyworms': 'armyworms'
+};
 
-function reauth() {
-  return new Promise((resolve, reject) => {
-    pendingAuth = { resolve, reject };
-    tokenClient.requestAccessToken({ prompt: '' });
+var SERVICE_SLUG = {
+  'Mosquitoes': 'mosquito-control', 'Ticks': 'tick-control', 'Ants (general)': 'ant-control', 'Fire Ants': 'fire-ant-control',
+  'Termites': 'termite-control', 'Fleas': 'flea-control', 'Chiggers': 'chigger-control', 'Clover Mites': 'clover-mite-control',
+  'Cockroaches': 'cockroach-control', 'Flies (house/filth)': 'fly-control', 'Flies (cluster)': 'cluster-fly-control',
+  'Gnats (buffalo/black)': 'gnat-control', 'Gnats (fungus, indoor)': 'gnat-control', 'No-See-Ums': 'no-see-um-control',
+  'Rodents': 'rodent-control', 'Scorpions': 'scorpion-control', 'Elm Seed Bugs': 'pest-control', 'Spiders': 'spider-control',
+  'Spotted Lanternfly': 'spotted-lanternfly-control', 'Stink Bugs': 'stink-bug-control', 'Boxelder Bugs': 'boxelder-bug-control',
+  'Wasps/Hornets/YJ': 'wasp-control', 'Armyworms': 'armyworm-control', 'General pest': 'pest-control'
+};
+
+var OUTDOOR = ['Mosquitoes', 'Ticks', 'Chiggers', 'No-See-Ums', 'Gnats (buffalo/black)',
+  'Wasps/Hornets/YJ', 'Fire Ants', 'Spotted Lanternfly', 'Flies (house/filth)', 'Armyworms'];
+
+// Pests where the angle is "never build a standalone cycle"
+var NO_STANDALONE = ['Elm Seed Bugs'];
+
+// Qualifiers used on the Monthly Priority tab, e.g. "fire ants (AL)"
+var QUALIFIERS = {
+  'chatt': ['Chattanooga'], 'knox': ['Knoxville'], 'al': ['Huntsville', 'Birmingham'],
+  'hsv': ['Huntsville'], 'bham': ['Birmingham'], 'cinci': ['Cincinnati'], 'cincy': ['Cincinnati'],
+  'dayton': ['Dayton'], 'nky': ['Northern Kentucky']
+};
+
+// Phrases on the Monthly Priority tab -> sheet pest rows (checked in order, first hit wins)
+var PRIORITY_WORDS = [
+  ['fire ant', 'Fire Ants'], ['armyworm', 'Armyworms'], ['cluster fl', 'Flies (cluster)'], ['buffalo gnat', 'Gnats (buffalo/black)'],
+  ['fungus gnat', 'Gnats (fungus, indoor)'], ['no-see-um', 'No-See-Ums'], ['clover mite', 'Clover Mites'],
+  ['stink bug', 'Stink Bugs'], ['boxelder', 'Boxelder Bugs'], ['slf', 'Spotted Lanternfly'],
+  ['lanternfl', 'Spotted Lanternfly'], ['mosquito', 'Mosquitoes'], ['tick', 'Ticks'], ['termite', 'Termites'],
+  ['flea', 'Fleas'], ['chigger', 'Chiggers'], ['roach', 'Cockroaches'], ['rodent', 'Rodents'],
+  ['scorpion', 'Scorpions'], ['spider', 'Spiders'], ['wasp', 'Wasps/Hornets/YJ'], ['hornet', 'Wasps/Hornets/YJ'],
+  ['flies', 'Flies (house/filth)'], ['ants', 'Ants (general)']
+];
+
+var MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+// ===================== MAIN =====================
+
+function buildPlan() {
+  var started = new Date();
+  var warnings = [];
+  var monday = targetMonday_(started);
+  var history = readJsonFile_(CONFIG.HISTORY_FILE) || { weeks: [] };
+
+  var calendar = readCalendar_(warnings);
+  var falcon = readFalcon_(warnings);
+  var lastCounts = JSON.parse(PropertiesService.getScriptProperties().getProperty('LAST_POST_COUNTS') || '{}');
+  var newCounts = {};
+
+  var priority = readPriority_(warnings);
+  var decisions = readJsonFile_(CONFIG.DECISIONS_FILE) || {};
+  var promoted = decisions.promoted || {};
+  var postDates = readJsonFile_(CONFIG.POSTDATE_FILE) || {};
+
+  // Phase 1: score every candidate in every market
+  var staged = CONFIG.MARKETS.map(function (m) {
+    var cal = calendar[m.tab];
+    var crawl = crawlBlog_(m.slug);
+    newCounts[m.tab] = crawl.posts.length;
+
+    // Crawl health: a big drop means the crawl broke, not that posts vanished
+    var prev = lastCounts[m.tab];
+    if (crawl.error) {
+      warnings.push(m.tab + ': blog crawl failed (' + crawl.error + '). Coverage checks are unreliable this week.');
+    } else if (prev && crawl.posts.length < prev * 0.7) {
+      crawl.suspect = true;
+      warnings.push(m.tab + ': found ' + crawl.posts.length + ' posts, last run found ' + prev + '. Check the blog index before trusting coverage.');
+    }
+    if (!cal) {
+      warnings.push(m.tab + ': tab not found in the calendar sheet.');
+      return { m: m, cal: null, crawl: crawl, scored: [] };
+    }
+    var fal = falcon[m.falcon] || null;
+    var pri = priority ? priority[monday.getMonth()] : null;
+    return { m: m, cal: cal, crawl: crawl, fal: fal, scored: scoreCandidates_(m, cal, crawl, fal, monday, history, pri) };
   });
-}
 
-async function api(url, opts = {}, retry = true) {
-  const res = await fetch(url, { ...opts, headers: { ...(opts.headers || {}), Authorization: 'Bearer ' + token } });
-  if (res.status === 401 && retry) { await reauth(); return api(url, opts, false); }
-  if (!res.ok) throw new Error('Drive returned ' + res.status + ' for ' + url.split('?')[0]);
-  return res;
-}
-
-async function findFile(name) {
-  const q = encodeURIComponent("name='" + name + "' and trashed=false");
-  const res = await api('https://www.googleapis.com/drive/v3/files?q=' + q + '&orderBy=modifiedTime desc&fields=files(id,modifiedTime)&pageSize=5');
-  const j = await res.json();
-  return (j.files || [])[0] || null;
-}
-
-async function readJson(id) {
-  const res = await api('https://www.googleapis.com/drive/v3/files/' + id + '?alt=media');
-  return res.json();
-}
-
-/* ================= LOAD ================= */
-async function start() {
-  $('gate').classList.add('hidden');
-  $('reloadBtn').classList.remove('hidden');
-  $('signOutBtn').classList.remove('hidden');
-  try {
-    const f = await findFile(DATA_FILE);
-    if (!f) {
-      $('app').classList.add('hidden');
-      gate('No plan found in your Drive. Run buildPlan in the Content Planner Backend Apps Script, then reload this page.');
-      $('signInBtn').textContent = 'Check again';
-      return;
+  // Phase 2: assign picks, strongest markets first, capping how many markets share one pest
+  var pestUse = {};
+  var order = staged.slice().sort(function (a, b) {
+    return ((b.scored[0] || {}).score || -999) - ((a.scored[0] || {}).score || -999);
+  });
+  order.forEach(function (st) {
+    var pick = null, bumped = [];
+    for (var i = 0; i < st.scored.length; i++) {
+      var c = st.scored[i];
+      if (c.mode === 'due' || (pestUse[c.pest] || 0) < CONFIG.MAX_MARKETS_PER_PEST) { pick = c; break; }
+      bumped.push(c.pest);
     }
-    plan = await readJson(f.id);
-    const d = await findFile(DECISIONS_FILE);
-    if (d) {
-      decisionsId = d.id;
-      try { decisions = await readJson(d.id); } catch (e) { decisions = { weeks: {}, team: [], promoted: {}, baselineDone: {} }; }
+    if (pick) {
+      pestUse[pick.pest] = (pestUse[pick.pest] || 0) + 1;
+      if (bumped.length) pick.reasons.push('Picked over ' + bumped.join(', ') + ' to keep topics spread across markets.');
     }
-    decisions.weeks = decisions.weeks || {};
-    decisions.team = decisions.team || [];
-    decisions.promoted = decisions.promoted || {};
-    decisions.baselineDone = decisions.baselineDone || {};
-    $('app').classList.remove('hidden');
-    render();
-  } catch (e) {
-    gate('Could not load the plan: ' + e.message + '. Reload, or sign out and back in.');
-  }
-}
+    st.pick = pick;
+  });
 
-/* ================= DECISIONS ================= */
-function weekState() {
-  const w = plan.weekOf;
-  decisions.weeks[w] = decisions.weeks[w] || {};
-  return decisions.weeks[w];
-}
-function marketState(name) {
-  const ws = weekState();
-  ws[name] = ws[name] || { choice: 0, area: null, status: 'open' };
-  return ws[name];
-}
-function scheduleSave() {
-  $('saveState').textContent = 'Saving...';
-  clearTimeout(saveTimer);
-  saveTimer = setTimeout(saveDecisions, 800);
-}
-async function saveDecisions() {
-  // keep a year of weeks
-  const keys = Object.keys(decisions.weeks).sort();
-  while (keys.length > 52) delete decisions.weeks[keys.shift()];
-  const body = JSON.stringify(decisions, null, 2);
-  try {
-    if (decisionsId) {
-      await api('https://www.googleapis.com/upload/drive/v3/files/' + decisionsId + '?uploadType=media', {
-        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body
-      });
-    } else {
-      const boundary = 'cpb' + Date.now();
-      const meta = JSON.stringify({ name: DECISIONS_FILE, mimeType: 'application/json' });
-      const multipart = '--' + boundary + '\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n' + meta +
-        '\r\n--' + boundary + '\r\nContent-Type: application/json\r\n\r\n' + body + '\r\n--' + boundary + '--';
-      const res = await api('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id', {
-        method: 'POST', headers: { 'Content-Type': 'multipart/related; boundary=' + boundary }, body: multipart
-      });
-      decisionsId = (await res.json()).id;
-    }
-    $('saveState').textContent = 'Saved';
-  } catch (e) {
-    $('saveState').textContent = 'Not saved: ' + e.message;
-  }
-}
+  // Blog publish dates, fetched once per post and cached in Drive
+  fillPostDates_(staged, postDates, warnings);
+  writeJsonFile_(CONFIG.POSTDATE_FILE, postDates);
 
-/* ================= DERIVED CONTENT ================= */
-function options(m) { return [m.pick, ...(m.alternates || [])].filter(Boolean); }
+  var markets = staged.map(function (st) {
+    var m = st.m;
+    if (!st.cal) return { market: m.tab, error: 'No calendar tab' };
+    var pri = priority ? priority[monday.getMonth()] : null;
+    var gbp = buildGbp_(st, monday, history, pri, promoted, postDates);
+    var alternates = st.scored.filter(function (c) { return c !== st.pick; }).slice(0, 2);
+    return {
+      market: m.tab,
+      areas: m.areas.map(areaName_),
+      verified: st.cal.verified,
+      blogIndex: 'https://www.mosquitosquad.com/' + m.slug + '/blog/',
+      postCount: st.crawl.posts.length,
+      pagesCrawled: st.crawl.pages,
+      crawlOk: !st.crawl.error && !st.crawl.suspect,
+      falcon: st.fal ? st.fal.summary : null,
+      pick: st.pick ? decorate_(st.pick, m, st.crawl) : null,
+      alternates: alternates.map(function (a) { return decorate_(a, m, st.crawl); }),
+      gbp: gbp
+    };
+  });
 
-function current(m) {
-  const st = marketState(m.market);
-  const opts = options(m);
-  const c = opts[st.choice] || opts[0];
-  if (!c) return null;
-  const area = st.area || c.area;
-  const words = c.words || c.pest.toLowerCase();
-  return {
-    ...c,
-    area,
-    productionLine: area + ' (' + m.market + ' market) ' + words + ' residential plog. Angle: ' + (c.angle || ''),
-    techQuestions: questions(c.questionType, area, words, c.pest),
-    status: st.status
+  PropertiesService.getScriptProperties().setProperty('LAST_POST_COUNTS', JSON.stringify(newCounts));
+
+  var out = {
+    generatedAt: started.toISOString(),
+    weekOf: fmtDate_(monday),
+    rule: 'Assign on the Monday ' + CONFIG.ASSIGN_MIN_DAYS + '-' + CONFIG.ASSIGN_MAX_DAYS + ' days before Start Posting',
+    warnings: warnings,
+    falconCheck: falcon._check || null,
+    markets: markets,
+    fieldAsk: buildFieldAsk_(markets, monday)
   };
-}
 
-function questions(type, area, w, pest) {
-  if (!type) type = pest === 'Termites' ? 'termite' : 'indoor';
-  if (type === 'outdoor') return [
-    'In ' + area + ', which yards have the worst ' + w + ' right now, and what do those yards have that others don\'t?',
-    'What\'s one thing homeowners in ' + area + ' do that makes ' + w + ' worse?'
-  ];
-  if (type === 'termite') return [
-    'On ' + area + ' jobs, where are you finding termite damage or swarmers first?',
-    'What do ' + area + ' homeowners usually mistake for termites, or miss completely?'
-  ];
-  return [
-    'In ' + area + ' homes, where are ' + w + ' actually getting in?',
-    'What do homeowners try before they call us about ' + w + ', and why doesn\'t it work?'
-  ];
-}
-
-function modeTag(c) {
-  if (c.status === 'locked') return '<span class="tag locked">Locked in</span>';
-  if (c.mode === 'due') return '<span class="tag due">Due this Monday</span>';
-  if (c.mode === 'late') return '<span class="tag late">Late, catch up</span>';
-  return '<span class="tag season">In season</span>';
-}
-
-function fmtDay(iso) {
-  if (!iso || !/^\d{4}-\d{2}-\d{2}$/.test(iso)) return iso || '';
-  const [y, mo, d] = iso.split('-').map(Number);
-  return new Date(y, mo - 1, d).toLocaleDateString(undefined, { month: 'long', day: 'numeric' });
-}
-
-/* ================= GBP ================= */
-function gbpPost1(m) {
-  if (!m.gbp) return null;
-  const wk = plan.weekOf;
-  return (m.gbp.post1Candidates || []).find(p => !decisions.promoted[p.url] || decisions.promoted[p.url] === wk) || null;
-}
-function gbpBrief1(m, p) {
-  return 'GBP post, ' + m.market + ': promote "' + p.title + '" (' + p.url + ').' +
-    (p.area ? ' Area: ' + p.area + '.' : '') + ' Photo tag: ' + p.photoTag;
-}
-function gbpBrief2(m, g) {
-  return 'GBP post, ' + m.market + ': ' + g.words + ' in ' + g.area + '.' +
-    (g.keyword ? ' Target keyword: ' + g.keyword + (g.solv != null ? ' (SoLV ' + g.solv + '%)' : '') + '.' : '') +
-    (g.angle ? ' Angle: ' + g.angle : '') + ' Photo tag: ' + g.photoTag;
-}
-function gbpBriefs(m) {
-  const out = [];
-  const p1 = gbpPost1(m);
-  if (p1) out.push(gbpBrief1(m, p1));
-  if (m.gbp && m.gbp.post2) out.push(gbpBrief2(m, m.gbp.post2));
+  writeJsonFile_(CONFIG.OUTPUT_FILE, out);
+  saveHistory_(history, monday, markets);
+  logSummary_(out);
   return out;
 }
 
-function renderGbp(m) {
-  if (!m.gbp) return '';
-  const st = marketState(m.market);
-  let html = '<div class="gbp"><h3>GBP posts this week</h3>';
+// ===================== CALENDAR =====================
 
-  if (!decisions.baselineDone[m.market] && (m.gbp.recentPosts || []).length) {
-    html += '<div class="baseline" data-baseline><p>One-time setup: check the blogs that already have a GBP post, so the planner starts from the right place.</p>' +
-      m.gbp.recentPosts.map(p => '<label><input type="checkbox" value="' + esc(p.url) + '"' + (decisions.promoted[p.url] ? ' checked' : '') + '><span>' +
-        esc(p.title) + (p.date ? ' (' + esc(fmtDay(p.date)) + ')' : '') + '</span></label>').join('') +
-      '<button class="btn" type="button" data-act="baseline">Save and continue</button></div>';
-  }
+function readCalendar_(warnings) {
+  var ss = SpreadsheetApp.openById(CONFIG.SHEET_ID);
+  var result = {};
+  CONFIG.MARKETS.forEach(function (m) {
+    var sh = ss.getSheetByName(m.tab);
+    if (!sh) return;
+    var values = sh.getDataRange().getValues();
+    var display = sh.getDataRange().getDisplayValues();
+    var hdr = -1;
+    for (var i = 0; i < values.length; i++) {
+      if (String(values[i][0]).trim() === 'Pest') { hdr = i; break; }
+    }
+    if (hdr < 0) { warnings.push(m.tab + ': no header row starting with "Pest".'); return; }
 
-  const p1 = gbpPost1(m);
-  if (p1) {
-    const done = decisions.promoted[p1.url] === plan.weekOf;
-    html += '<div class="gpost' + (done ? ' done' : '') + '"><div class="gkind">Promote a blog</div><div>' +
-      '<p class="gtitle">' + esc(p1.title) + '</p>' +
-      '<p class="gsub">' + (p1.date ? 'Published ' + esc(fmtDay(p1.date)) + '. ' : 'Publish date not found. ') +
-        'Newest blog without a GBP post' + (p1.skippedOffSeason ? ', though its pest is out of season' : '') + '. ' +
-        '<a href="' + esc(p1.url) + '" target="_blank" rel="noopener">Open post</a></p>' +
-      '<span class="tagline">' + esc(p1.photoTag) + '</span>' +
-      '<div class="controls"><button class="btn" type="button" data-act="g1copy">Copy brief</button>' +
-      '<button class="btn" type="button" data-act="g1tag">Copy photo tag</button>' +
-      '<button class="btn" type="button" data-act="g1done" aria-pressed="' + done + '">' + (done ? 'Posted' : 'Mark posted') + '</button></div>' +
-      '</div></div>';
-  } else {
-    html += '<div class="gpost"><div class="gkind">Promote a blog</div><div><p class="gsub">Every blog in this market already has a GBP post. Use this slot for a second Falcon post or a photo update.</p></div></div>';
-  }
+    var headRow = display[hdr].map(function (h) { return String(h).trim().toLowerCase(); });
+    var colStart = headRow.indexOf('start posting');
+    var colNotes = headRow.findIndex(function (h) { return h.indexOf('notes') === 0; });
+    var colJan = headRow.indexOf('jan');
+    if (colStart < 0 || colJan < 0) { warnings.push(m.tab + ': missing Jan or Start Posting column.'); return; }
 
-  const g = m.gbp.post2;
-  if (g) {
-    const done = st.gbp2 === 'posted';
-    const tr = g.keyword && (m.gbp.tracking || []).find(t => t.keyword === g.keyword);
-    html += '<div class="gpost' + (done ? ' done' : '') + '"><div class="gkind">Falcon and season</div><div>' +
-      '<p class="gtitle">' + esc(g.pest === 'General pest' ? 'General pest control' : g.pest) + ' in ' + esc(g.area) + '</p>' +
-      '<p class="gsub">' + esc((g.why || []).join(' ')) + '</p>' +
-      (tr ? '<p class="track">Targeted since ' + esc(fmtDay(tr.firstWeek)) + ' (' + tr.times + ' week' + (tr.times === 1 ? '' : 's') + '): SoLV ' +
-        esc(tr.solvThen == null ? '?' : tr.solvThen) + '% then, ' + esc(tr.solvNow == null ? '?' : tr.solvNow) + '% now.</p>' : '') +
-      '<span class="tagline">' + esc(g.photoTag) + '</span>' +
-      '<div class="controls"><button class="btn" type="button" data-act="g2copy">Copy brief</button>' +
-      '<button class="btn" type="button" data-act="g2tag">Copy photo tag</button>' +
-      '<button class="btn" type="button" data-act="g2done" aria-pressed="' + done + '">' + (done ? 'Posted' : 'Mark posted') + '</button></div>' +
-      '</div></div>';
-  }
-
-  const others = (m.gbp.tracking || []).filter(t => !g || t.keyword !== g.keyword);
-  if (others.length) {
-    html += '<p class="track">Earlier Falcon targets: ' + others.map(t => esc(t.keyword) + ' ' +
-      esc(t.solvThen == null ? '?' : t.solvThen) + '% to ' + esc(t.solvNow == null ? '?' : t.solvNow) + '%').join(', ') + '.</p>';
-  }
-  return html + '</div>';
+    var preText = display.slice(0, hdr).map(function (r) { return r.join(' '); }).join(' ');
+    var rows = [];
+    for (var r = hdr + 1; r < values.length; r++) {
+      var pest = String(values[r][0]).trim();
+      if (!pest) continue;
+      var status = [];
+      for (var c = 0; c < 12; c++) status.push(String(display[r][colJan + c]).trim().toUpperCase());
+      rows.push({
+        pest: pest,
+        status: status,
+        start: parseStart_(values[r][colStart], display[r][colStart]),
+        startRaw: String(display[r][colStart]).trim(),
+        notes: colNotes >= 0 ? String(display[r][colNotes]).trim() : ''
+      });
+      if (!PEST_MATCH[pest]) warnings.push(m.tab + ': "' + pest + '" has no blog-matching rule, coverage will read 0.');
+    }
+    var verified = preText.toUpperCase().indexOf('NOT CONFIRMED') < 0;
+    if (!verified) warnings.push(m.tab + ': pest list marked NOT CONFIRMED on the sheet.');
+    result[m.tab] = { rows: rows, verified: verified };
+  });
+  return result;
 }
 
-/* ================= RENDER ================= */
-function render() {
-  $('weekTitle').textContent = 'Week of ' + fmtDay(plan.weekOf);
-  const gen = new Date(plan.generatedAt);
-  $('weekSub').textContent = 'Plan built ' + gen.toLocaleString(undefined, { weekday: 'long', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) +
-    '. Lock the blog picks you are writing, swap anything that does not fit, send the field questions, and mark GBP posts as they go up.';
-  $('notices').innerHTML = (plan.warnings || []).map(w => '<li>' + esc(w) + '</li>').join('');
-
-  $('markets').innerHTML = plan.markets.map(renderMarket).join('');
-  bindMarkets();
-  renderTeam();
-
-  const fc = plan.falconCheck;
-  $('foot').innerHTML = esc(plan.rule || '') +
-    (fc ? '. Local Falcon check: ' + fc.reportsChecked + ' scans recomputed, ' + fc.mismatches.length + ' mismatches.' : '.');
+// Monthly Priority tab -> [month 0-11] -> { south: {pest: 'primary'|'listed'}, ohio: {...} } with market qualifiers
+function readPriority_(warnings) {
+  var sh = SpreadsheetApp.openById(CONFIG.SHEET_ID).getSheetByName(CONFIG.PRIORITY_TAB);
+  if (!sh) { warnings.push('No "' + CONFIG.PRIORITY_TAB + '" tab. Monthly priorities skipped.'); return null; }
+  var rows = sh.getDataRange().getDisplayValues();
+  var full = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+  var out = [];
+  rows.forEach(function (r) {
+    var idx = full.indexOf(String(r[0]).trim());
+    if (idx < 0) return;
+    out[idx] = { south: parsePriorityCell_(r[1]), ohio: parsePriorityCell_(r[2]) };
+  });
+  if (out.filter(Boolean).length < 12) warnings.push('Monthly Priority tab: expected 12 month rows, found ' + out.filter(Boolean).length + '.');
+  return out;
 }
 
-function renderMarket(m) {
-  if (m.error) {
-    return '<section class="market"><div class="rail"><h2>' + esc(m.market) + '</h2></div><div class="main"><p>' + esc(m.error) + '</p></div></section>';
-  }
-  const c = current(m);
-  const facts = [
-    m.postCount + (m.postCount === 1 ? ' post found' : ' posts found'),
-    m.crawlOk ? '' : '<span class="flag">Crawl needs a look</span>',
-    m.verified ? '' : '<span class="flag">Pest list unverified</span>'
-  ].filter(Boolean).join('<br>');
-  const rail = '<div class="rail"><h2>' + esc(m.market) + '</h2><div class="facts">' + facts + '</div></div>';
-
-  if (!c) {
-    return '<section class="market" data-market="' + esc(m.market) + '">' + rail + '<div class="main"><p class="pick">Nothing strong this week</p>' +
-      '<p class="meta">No pest is due, late, or in season without coverage. Skip this market or pick your own topic.</p>' + renderGbp(m) + '</div></section>';
-  }
-
-  const st = marketState(m.market);
-  const areaOpts = (m.areas && m.areas.length ? m.areas : [c.area]);
-  if (areaOpts.indexOf(c.area) < 0) areaOpts.push(c.area);
-  const alts = options(m).map((o, i) => i === st.choice ? '' :
-    '<button class="btn" type="button" data-act="choose" data-i="' + i + '">Use ' + esc(o.pest) + ' instead</button>').join('');
-
-  const sisters = (c.sisterPosts || []).length
-    ? '<ul>' + c.sisterPosts.map(u => '<li><a href="' + esc(u) + '" target="_blank" rel="noopener">' + esc(u.replace(/^https?:\/\/(www\.)?mosquitosquad\.com/, '')) + '</a></li>').join('') + '</ul>'
-    : '<p>None found. Nothing on the blog covers this pest or area yet.</p>';
-
-  const kw = m.falcon && m.falcon.keywords && m.falcon.keywords.length
-    ? '<table class="kw"><thead><tr><th>Keyword</th><th>SoLV</th><th>Last move</th><th>Last scan</th></tr></thead><tbody>' +
-      m.falcon.keywords.map(k => '<tr><td>' + esc(k.keyword) + '</td><td>' + (k.solv == null ? '' : esc(k.solv) + '%') +
-        '</td><td class="' + (k.solvMove < 0 ? 'down' : '') + '">' + (k.solvMove == null ? '' : esc(k.solvMove)) +
-        '</td><td>' + esc(k.lastDate || '') + '</td></tr>').join('') + '</tbody></table>'
-    : '<p>No Local Falcon data for this market.</p>';
-
-  return '<section class="market' + (st.status === 'skipped' ? ' skipped' : '') + '" data-market="' + esc(m.market) + '">' + rail +
-    '<div class="main">' +
-      '<p class="pick">' + esc(c.pest) + ' in ' + esc(c.area) + '</p>' +
-      '<div class="meta">' + modeTag(c) +
-        (c.liveBy && c.liveBy !== 'in season now' ? '<span>Live by ' + esc(fmtDay(c.liveBy)) + '</span>' : '') +
-        (st.status === 'skipped' ? '<span>Skipped this week</span>' : '') +
-      '</div>' +
-      '<ul class="why">' + (c.why || []).map(x => '<li>' + esc(x) + '</li>').join('') + '</ul>' +
-      (c.caution ? '<p class="caution">' + esc(c.caution) + '</p>' : '') +
-      '<p class="line">' + esc(c.productionLine) + '</p>' +
-      '<div class="controls">' +
-        '<button class="btn" type="button" data-act="copyLine">Copy line</button>' +
-        '<button class="btn" type="button" data-act="copyAsk">Copy questions</button>' +
-        '<label>Area <select data-act="area">' + areaOpts.map(a => '<option' + (a === c.area ? ' selected' : '') + '>' + esc(a) + '</option>').join('') + '</select></label>' +
-        '<button class="btn" type="button" data-act="lock" aria-pressed="' + (st.status === 'locked') + '">' + (st.status === 'locked' ? 'Locked in' : 'Lock in') + '</button>' +
-        '<button class="btn quiet" type="button" data-act="skip" aria-pressed="' + (st.status === 'skipped') + '">' + (st.status === 'skipped' ? 'Skipped' : 'Skip') + '</button>' +
-      '</div>' +
-      (alts ? '<div class="alts">Other options: ' + alts + '</div>' : '') +
-      '<details><summary>Angle, sister posts, and Falcon data</summary><div class="inner">' +
-        '<div><h4>Angle from the pest calendar</h4><p>' + esc(c.angle || 'No note on the sheet.') + '</p></div>' +
-        '<div><h4>Why this area</h4><p>' + esc(c.areaReason || '') + '</p></div>' +
-        '<div><h4>Sister posts to differentiate against</h4>' + sisters + '</div>' +
-        '<div><h4>Local Falcon</h4>' + kw + '</div>' +
-        '<div><h4>Blog index</h4><p><a href="' + esc(m.blogIndex) + '" target="_blank" rel="noopener">' + esc(m.blogIndex) + '</a></p></div>' +
-      '</div></details>' +
-      renderGbp(m) +
-    '</div></section>';
+function parsePriorityCell_(cell) {
+  var map = {};
+  // split on commas that are not inside parentheses
+  var items = String(cell || '').split(/,(?![^(]*\))/);
+  items.forEach(function (raw) {
+    var item = raw.trim();
+    if (!item) return;
+    var qual = null;
+    var q = item.match(/\(([^)]*)\)/);
+    if (q) {
+      var names = [];
+      q[1].split(',').forEach(function (t) {
+        var k = t.trim().toLowerCase();
+        if (QUALIFIERS[k]) names = names.concat(QUALIFIERS[k]);
+      });
+      if (names.length) qual = names;
+    }
+    var text = item.replace(/\([^)]*\)/g, '').trim();
+    var lower = text.toLowerCase();
+    var pest = null;
+    for (var i = 0; i < PRIORITY_WORDS.length; i++) {
+      if (lower.indexOf(PRIORITY_WORDS[i][0]) >= 0) { pest = PRIORITY_WORDS[i][1]; break; }
+    }
+    if (!pest) return;
+    var level = (text === text.toUpperCase() && /[A-Z]/.test(text)) ? 'primary' : 'listed';
+    if (!map[pest] || level === 'primary') map[pest] = { level: level, markets: qual };
+  });
+  return map;
 }
 
-function bindMarkets() {
-  document.querySelectorAll('.market[data-market]').forEach(sec => {
-    const name = sec.getAttribute('data-market');
-    const m = plan.markets.find(x => x.market === name);
-    sec.addEventListener('click', (e) => {
-      const b = e.target.closest('button[data-act]');
-      if (!b) return;
-      const st = marketState(name);
-      const act = b.getAttribute('data-act');
-      if (act === 'g1copy') return copy(gbpBrief1(m, gbpPost1(m)), 'Brief copied');
-      if (act === 'g1tag') return copy(gbpPost1(m).photoTag, 'Photo tag copied');
-      if (act === 'g2copy') return copy(gbpBrief2(m, m.gbp.post2), 'Brief copied');
-      if (act === 'g2tag') return copy(m.gbp.post2.photoTag, 'Photo tag copied');
-      if (act === 'g1done') {
-        const p = gbpPost1(m);
-        if (decisions.promoted[p.url] === plan.weekOf) delete decisions.promoted[p.url];
-        else decisions.promoted[p.url] = plan.weekOf;
-        scheduleSave(); return rerender();
+function priorityFor_(pri, m, pest) {
+  if (!pri) return null;
+  var e = pri[m.region] && pri[m.region][pest];
+  if (!e) return null;
+  if (e.markets && e.markets.indexOf(m.tab) < 0) return null;
+  return e.level;
+}
+
+// Returns {month: 0-11, day} or null for none / n/a
+function parseStart_(raw, shown) {
+  if (raw instanceof Date) return { month: raw.getMonth(), day: raw.getDate() };
+  var s = String(shown || raw).trim();
+  var m = s.match(/^([A-Za-z]{3})[a-z]*\.?\s+(\d{1,2})$/);
+  if (m) {
+    var idx = MONTHS.indexOf(m[1].charAt(0).toUpperCase() + m[1].slice(1, 3).toLowerCase());
+    if (idx >= 0) return { month: idx, day: parseInt(m[2], 10) };
+  }
+  var n = s.match(/^(\d{1,2})\/(\d{1,2})/);
+  if (n) return { month: parseInt(n[1], 10) - 1, day: parseInt(n[2], 10) };
+  return null;
+}
+
+// ===================== BLOG CRAWL =====================
+
+function crawlBlog_(slug) {
+  var base = 'https://www.mosquitosquad.com/' + slug + '/blog/';
+  var seen = {};
+  var posts = [];
+  var pages = 0;
+  var skip = { category: 1, tag: 1, page: 1, author: 1, feed: 1, search: 1 };
+  var re = new RegExp('href="(?:https?://(?:www\\.)?mosquitosquad\\.com)?/' + slug.replace(/-/g, '\\-') + '/blog/([a-z0-9][a-z0-9\\-]*)/?"', 'gi');
+
+  for (var p = 1; p <= 40; p++) {
+    var url = p === 1 ? base : base + p + '/';
+    var res;
+    try {
+      res = UrlFetchApp.fetch(url, { muteHttpExceptions: true, followRedirects: true });
+    } catch (e) {
+      if (p === 1) return { posts: [], pages: 0, error: String(e) };
+      break;
+    }
+    var code = res.getResponseCode();
+    if (code !== 200) {
+      if (p === 1) return { posts: [], pages: 0, error: 'HTTP ' + code };
+      break;
+    }
+    pages++;
+    var html = res.getContentText();
+    var found = 0, match;
+    re.lastIndex = 0;
+    while ((match = re.exec(html)) !== null) {
+      var s = match[1].toLowerCase();
+      if (/^\d+$/.test(s) || skip[s]) continue;
+      if (!seen[s]) {
+        seen[s] = true;
+        posts.push({ slug: s, url: base + s + '/' });
+        found++;
       }
-      if (act === 'g2done') { st.gbp2 = st.gbp2 === 'posted' ? null : 'posted'; scheduleSave(); return rerender(); }
-      if (act === 'baseline') {
-        const box = sec.querySelector('[data-baseline]');
-        box.querySelectorAll('input[type="checkbox"]').forEach(cb => {
-          if (cb.checked) decisions.promoted[cb.value] = decisions.promoted[cb.value] || 'baseline';
-          else if (decisions.promoted[cb.value] === 'baseline') delete decisions.promoted[cb.value];
-        });
-        decisions.baselineDone[name] = true;
-        scheduleSave(); return rerender();
-      }
-      if (act === 'copyLine') return copy(current(m).productionLine, 'Line copied');
-      if (act === 'copyAsk') return copy(askBlock(m), 'Questions copied');
-      if (act === 'choose') { st.choice = Number(b.getAttribute('data-i')); st.area = null; }
-      if (act === 'lock') st.status = st.status === 'locked' ? 'open' : 'locked';
-      if (act === 'skip') st.status = st.status === 'skipped' ? 'open' : 'skipped';
-      scheduleSave(); rerender();
+    }
+    if (found === 0) break;       // a page with nothing new means we ran past the end
+    Utilities.sleep(300);
+  }
+  return { posts: posts, pages: pages, error: null };
+}
+
+function slugMatchesPest_(slug, pest) {
+  var rule = PEST_MATCH[pest];
+  if (!rule) return false;
+  var padded = '-' + slug + '-';
+  var hit = rule.any.some(function (t) { return padded.indexOf('-' + t + '-') >= 0; });
+  if (!hit) return false;
+  if (rule.not && rule.not.some(function (t) { return padded.indexOf('-' + t) >= 0; })) return false;
+  return true;
+}
+
+// area can list spellings separated by | ("Northshore|North Shore"); the first is the display name
+function slugMatchesArea_(slug, area) {
+  return area.split('|').some(function (name) {
+    var a = name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-');
+    return ('-' + slug + '-').indexOf('-' + a + '-') >= 0;
+  });
+}
+
+function areaName_(area) {
+  return area.split('|')[0].trim();
+}
+
+// ===================== LOCAL FALCON =====================
+
+function readFalcon_(warnings) {
+  var key = PropertiesService.getScriptProperties().getProperty('LF_API_KEY');
+  var out = {};
+  if (!key) { warnings.push('Local Falcon: no LF_API_KEY in Script Properties. Falcon signal skipped.'); return out; }
+
+  var locs = lfPost_('/v1/locations/', { limit: 100 }, key);
+  if (!locs) { warnings.push('Local Falcon: could not list locations.'); return out; }
+  var msLocs = (locs.locations || []).filter(function (l) { return /mosquito squad/i.test(l.name); });
+
+  var check = { reportsChecked: 0, mismatches: [] };
+
+  CONFIG.MARKETS.forEach(function (m) {
+    var loc = msLocs.filter(function (l) { return l.name.toLowerCase().indexOf(m.falcon.toLowerCase()) >= 0; })[0];
+    if (!loc) { warnings.push('Local Falcon: no Mosquito Squad location matched "' + m.falcon + '".'); return; }
+
+    var tr = lfPost_('/v1/trend-reports/', { place_id: loc.place_id, limit: 100 }, key);
+    var reports = (tr && tr.reports) || [];
+    var keywords = reports.map(function (r) {
+      return {
+        keyword: r.keyword,
+        solv: num_(r.solv),
+        solvMove: num_(r.solv_move),
+        arp: r.arp,
+        lastDate: r.last_date,
+        reportKey: r.report_key
+      };
     });
-    const sel = sec.querySelector('select[data-act="area"]');
-    if (sel) sel.addEventListener('change', () => { marketState(name).area = sel.value; scheduleSave(); rerender(); });
+
+    // Self-check: recompute SoLV from raw grid points on the newest scan for up to 3 keywords
+    keywords.slice(0, 3).forEach(function (k) {
+      var trend = lfPost_('/v1/trend-reports/' + k.reportKey, {}, key);
+      var scans = (trend && trend.scans) || [];
+      if (!scans.length) return;
+      var latest = scans.slice().sort(function (a, b) { return num_(b.timestamp) - num_(a.timestamp); })[0];
+      var scan = lfPost_('/v1/reports/' + latest.report_key + '/', {}, key);
+      if (!scan || !scan.data_points) return;
+      var pts = scan.data_points;
+      var top3 = pts.filter(function (p) { return p.found && typeof p.rank === 'number' && p.rank <= 3; }).length;
+      var mine = pts.length ? Math.round((top3 / pts.length) * 10000) / 100 : 0;
+      var theirs = num_(scan.solv);
+      check.reportsChecked++;
+      if (theirs !== null && Math.abs(mine - theirs) > 1) {
+        check.mismatches.push(m.tab + ' / ' + k.keyword + ': recomputed ' + mine + ' vs Local Falcon ' + theirs);
+      }
+    });
+
+    out[m.falcon] = {
+      placeId: loc.place_id,
+      keywords: keywords,
+      summary: {
+        location: loc.name,
+        keywords: keywords.map(function (k) {
+          return { keyword: k.keyword, solv: k.solv, solvMove: k.solvMove, lastDate: k.lastDate };
+        })
+      }
+    };
   });
+
+  if (check.mismatches.length) warnings.push('Local Falcon self-check: ' + check.mismatches.length + ' SoLV mismatch(es). Falcon boosts may be off.');
+  out._check = check;
+  return out;
 }
 
-function rerender() {
-  const y = window.scrollY;
-  render();
-  window.scrollTo(0, y);
-}
-
-/* ================= FIELD TEAM ================= */
-function activeMarkets() {
-  return plan.markets.filter(m => !m.error && current(m) && marketState(m.market).status !== 'skipped');
-}
-
-function askBlock(m) {
-  const c = current(m);
-  return m.market.toUpperCase() + ' (' + (c.words || c.pest.toLowerCase()) + ', ' + c.area + ')\n' +
-    c.techQuestions.map((q, i) => (i + 1) + '. ' + q).join('\n');
-}
-
-function askFor(marketNames, name) {
-  const list = activeMarkets().filter(m => marketNames.indexOf(m.market) >= 0);
-  if (!list.length) return '';
-  const hi = name ? 'Hey ' + name.split(' ')[0] + ', a couple quick questions for this week\'s posts. Short answers are perfect, photos welcome.\n\n'
-                  : 'Quick questions for this week\'s posts. Short answers are perfect, photos welcome.\n\n';
-  return hi + list.map(askBlock).join('\n\n');
-}
-
-function renderTeam() {
-  const names = plan.markets.map(m => m.market);
-  $('people').innerHTML = decisions.team.map((p, i) => {
-    const text = askFor(p.markets || [], p.name);
-    return '<div class="person" data-i="' + i + '">' +
-      '<div class="person-head"><input type="text" value="' + esc(p.name) + '" placeholder="Name" aria-label="Name" data-f="name">' +
-      '<button class="btn quiet" type="button" data-f="remove">Remove</button></div>' +
-      '<div class="checks">' + names.map(n => '<label><input type="checkbox" data-f="mk" value="' + esc(n) + '"' +
-        ((p.markets || []).indexOf(n) >= 0 ? ' checked' : '') + '>' + esc(n) + '</label>').join('') + '</div>' +
-      (text ? '<div class="ask">' + esc(text) + '</div><button class="btn" type="button" data-f="copy">Copy ' + esc(p.name ? p.name.split(' ')[0] + '\'s' : 'these') + ' questions</button>'
-            : '<p class="section-note" style="margin:12px 0 0">No active markets checked for this person this week.</p>') +
-      '</div>';
-  }).join('');
-
-  const covered = new Set(decisions.team.flatMap(p => p.markets || []));
-  const loose = activeMarkets().map(m => m.market).filter(n => !covered.has(n));
-  $('unassigned').innerHTML = loose.length
-    ? '<h3 style="margin:24px 0 6px">Nobody assigned</h3><p class="section-note">' + esc(loose.join(', ')) +
-      (loose.length === 1 ? ' has' : ' have') + ' no one to ask. Check a box above, or copy these and send them yourself.</p>' +
-      '<div class="ask">' + esc(askFor(loose, '')) + '</div><button class="btn" type="button" id="copyLoose">Copy these questions</button>'
-    : '';
-  const cl = $('copyLoose');
-  if (cl) cl.onclick = () => copy(askFor(loose, ''), 'Questions copied');
-
-  document.querySelectorAll('.person').forEach(el => {
-    const i = Number(el.getAttribute('data-i'));
-    const p = decisions.team[i];
-    el.querySelector('[data-f="name"]').addEventListener('change', (e) => { p.name = e.target.value.trim(); scheduleSave(); rerender(); });
-    el.querySelector('[data-f="remove"]').onclick = () => { decisions.team.splice(i, 1); scheduleSave(); rerender(); };
-    el.querySelectorAll('[data-f="mk"]').forEach(cb => cb.addEventListener('change', () => {
-      p.markets = Array.from(el.querySelectorAll('[data-f="mk"]:checked')).map(x => x.value);
-      scheduleSave(); rerender();
-    }));
-    const cp = el.querySelector('[data-f="copy"]');
-    if (cp) cp.onclick = () => copy(askFor(p.markets || [], p.name), 'Questions copied');
-  });
-}
-
-$('addPerson').onclick = () => { decisions.team.push({ name: '', markets: [] }); scheduleSave(); rerender(); };
-
-$('copyLines').onclick = () => {
-  const list = activeMarkets();
-  const locked = list.filter(m => marketState(m.market).status === 'locked');
-  const use = locked.length ? locked : list;
-  copy(use.map(m => current(m).productionLine).join('\n\n'), (locked.length ? 'Locked lines' : 'All lines') + ' copied');
-};
-$('copyGbp').onclick = () => {
-  const lines = plan.markets.filter(m => !m.error).flatMap(gbpBriefs);
-  copy(lines.join('\n\n'), 'GBP briefs copied');
-};
-$('copyAskAll').onclick = () => copy(askFor(activeMarkets().map(m => m.market), ''), 'Questions copied');
-
-/* ================= UTIL ================= */
-async function copy(text, msg) {
-  try { await navigator.clipboard.writeText(text); }
-  catch (e) {
-    const ta = document.createElement('textarea'); ta.value = text; document.body.appendChild(ta);
-    ta.select(); document.execCommand('copy'); ta.remove();
+function lfPost_(path, params, key) {
+  params.api_key = key;
+  try {
+    var res = UrlFetchApp.fetch('https://api.localfalcon.com' + path, {
+      method: 'post', payload: params, muteHttpExceptions: true
+    });
+    Utilities.sleep(250);
+    var body = JSON.parse(res.getContentText());
+    return body && body.success ? body.data : null;
+  } catch (e) {
+    return null;
   }
-  const t = $('toast'); t.textContent = msg; t.classList.add('show');
-  clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove('show'), 1600);
 }
-</script>
-</body>
-</html>
+
+function num_(v) {
+  var n = parseFloat(v);
+  return isNaN(n) ? null : n;
+}
+
+// Which Falcon keyword (if any) is about this pest
+function falconForPest_(fal, pest) {
+  if (!fal) return null;
+  var hits = fal.keywords.filter(function (k) {
+    var slug = String(k.keyword).toLowerCase().replace(/[^a-z0-9]+/g, '-');
+    return slugMatchesPest_(slug, pest);
+  });
+  if (!hits.length) return null;
+  hits.sort(function (a, b) { return (a.solv || 0) - (b.solv || 0); });
+  return hits[0];
+}
+
+// ===================== SCORING =====================
+
+function scoreCandidates_(m, cal, crawl, fal, monday, history, pri) {
+  var month = monday.getMonth();
+  var next = (month + 1) % 12;
+  var recent = recentPicks_(history, m.tab, monday, CONFIG.REPEAT_BLOCK_WEEKS);
+  var list = [];
+
+  cal.rows.forEach(function (row) {
+    var now = row.status[month];
+    if (row.status.every(function (s) { return s === 'N/A'; })) return;   // not present in market
+    if (now === 'N/A') return;
+    if (NO_STANDALONE.indexOf(row.pest) >= 0) return;
+
+    var coverage = crawl.posts.filter(function (p) { return slugMatchesPest_(p.slug, row.pest); });
+    var score = 0, mode = null, reasons = [];
+    var startDate = row.start ? nextOccurrence_(row.start, monday) : null;
+    var daysOut = startDate ? daysBetween_(monday, startDate) : null;
+
+    if (daysOut !== null && daysOut >= CONFIG.ASSIGN_MIN_DAYS && daysOut <= CONFIG.ASSIGN_MAX_DAYS) {
+      score = 100; mode = 'due';
+      reasons.push('Start Posting ' + row.startRaw + ' is ' + daysOut + ' days out. This is the Monday to assign it.');
+    } else if (daysOut !== null && daysOut < CONFIG.ASSIGN_MIN_DAYS && daysOut >= -CONFIG.LATE_LOOKBACK_DAYS && coverage.length === 0) {
+      score = 80; mode = 'late';
+      if (now === 'PEAK') score += 5;                       // still worth catching while it's peaking
+      if (daysOut < 0) score -= Math.floor(-daysOut / 7);   // older misses fade a little
+      reasons.push('Start Posting ' + row.startRaw + (daysOut < 0 ? ' passed ' + (-daysOut) + ' days ago' : ' is only ' + daysOut + ' days out') + ' and no post exists yet.');
+    } else if (now === 'PEAK' || now === 'ACTIVE') {
+      mode = 'in-season';
+      score = now === 'PEAK' ? 40 : 15;
+      reasons.push(MONTHS[month] + ' is ' + (now === 'PEAK' ? 'peak' : 'active') + ' for this pest.');
+      if (row.status[next] === 'PEAK' && now !== 'PEAK') { score += 10; reasons.push('Peak starts next month.'); }
+    } else {
+      return;   // dormant and not due
+    }
+
+    if (mode !== 'due') {
+      var pen = Math.min(coverage.length * 8, 32);
+      if (pen) { score -= pen; }
+      reasons.push(coverage.length ? coverage.length + ' existing post(s) on this pest.' : 'No existing posts on this pest.');
+    }
+
+    var kp = m.priorities.indexOf(row.pest);
+    if (kp >= 0) { score += (12 - kp * 3); reasons.push('Priority keyword #' + (kp + 1) + ' for this market.'); }
+
+    if (mode !== 'due') {
+      var level = priorityFor_(pri, m, row.pest);
+      if (level === 'primary') { score += CONFIG.PRIMARY_BOOST; reasons.push('Primary push on the Monthly Priority tab.'); }
+      else if (level === 'listed') { score += CONFIG.LISTED_BOOST; reasons.push('Listed on the Monthly Priority tab.'); }
+      else if (pri) { score -= CONFIG.UNLISTED_PENALTY; reasons.push('Not on this month\'s priority list.'); }
+    }
+
+    var fk = falconForPest_(fal, row.pest);
+    if (fk) {
+      if (fk.solv !== null && fk.solv < 30) { score += 10; reasons.push('Falcon: "' + fk.keyword + '" SoLV ' + fk.solv + '%.'); }
+      if (fk.solvMove !== null && fk.solvMove < 0) { score += 8; reasons.push('Falcon: SoLV down ' + fk.solvMove + ' on last scan.'); }
+    }
+
+    if (recent.indexOf(row.pest) >= 0) { score -= 50; reasons.push('Proposed in the last ' + CONFIG.REPEAT_BLOCK_WEEKS + ' weeks.'); }
+
+    list.push({
+      pest: row.pest, score: score, mode: mode, reasons: reasons,
+      startPosting: row.startRaw || null,
+      liveBy: mode === 'in-season' ? 'in season now' : (startDate ? fmtDate_(startDate) : null),
+      notes: row.notes, coverage: coverage
+    });
+  });
+
+  list.sort(function (a, b) { return b.score - a.score; });
+  return list;
+}
+
+function decorate_(c, m, crawl) {
+  var area = pickArea_(m, c.pest, crawl);
+  var words = PEST_WORDS[c.pest] || c.pest.toLowerCase();
+  var caution = /FLAG|NO confirmed|awareness/i.test(c.notes) ? 'Check the sheet note before writing: ' + c.notes : null;
+  var sisters = crawl.posts.filter(function (p) {
+    return slugMatchesPest_(p.slug, c.pest) || slugMatchesArea_(p.slug, area.key);
+  }).slice(0, 8).map(function (p) { return p.url; });
+
+  return {
+    pest: c.pest,
+    area: area.name,
+    areaReason: area.reason,
+    mode: c.mode,
+    score: c.score,
+    startPosting: c.startPosting,
+    liveBy: c.liveBy,
+    why: c.reasons,
+    angle: c.notes,
+    caution: caution,
+    sisterPosts: sisters,
+    words: words,
+    questionType: OUTDOOR.indexOf(c.pest) >= 0 ? 'outdoor' : (c.pest === 'Termites' ? 'termite' : 'indoor'),
+    productionLine: area.name + ' (' + m.tab + ' market) ' + words + ' residential plog. Angle: ' + c.notes,
+    techQuestions: techQuestions_(c.pest, area.name, words)
+  };
+}
+
+function pickArea_(m, pest, crawl) {
+  var best = null;
+  m.areas.forEach(function (a, i) {
+    var both = crawl.posts.filter(function (p) { return slugMatchesArea_(p.slug, a) && slugMatchesPest_(p.slug, pest); }).length;
+    var any = crawl.posts.filter(function (p) { return slugMatchesArea_(p.slug, a); }).length;
+    var s = -both * 10 - any * 2 - i * 0.1;   // list order breaks ties, first = highest priority
+    var reason = both ? both + ' post(s) already cover this pest here' :
+      (any ? 'No post on this pest here, ' + any + ' post(s) on other topics' : 'No posts mention this area yet');
+    if (!best || s > best.s) best = { name: areaName_(a), key: a, s: s, reason: reason };
+  });
+  return best;
+}
+
+// ===================== TECH QUESTIONS =====================
+
+function techQuestions_(pest, area, words) {
+  if (OUTDOOR.indexOf(pest) >= 0) {
+    return [
+      'In ' + area + ', which yards have the worst ' + words + ' right now, and what do those yards have that others don\'t?',
+      'What\'s one thing homeowners in ' + area + ' do that makes ' + words + ' worse?'
+    ];
+  }
+  if (pest === 'Termites') {
+    return [
+      'On ' + area + ' jobs, where are you finding termite damage or swarmers first?',
+      'What do ' + area + ' homeowners usually mistake for termites, or miss completely?'
+    ];
+  }
+  return [
+    'In ' + area + ' homes, where are ' + words + ' actually getting in?',
+    'What do homeowners try before they call us about ' + words + ', and why doesn\'t it work?'
+  ];
+}
+
+function buildFieldAsk_(markets, monday) {
+  var lines = ['Field questions for the week of ' + fmtDate_(monday) + '. Short answers are perfect, photos welcome.', ''];
+  markets.forEach(function (mk) {
+    if (!mk.pick) return;
+    lines.push(mk.market.toUpperCase() + ' (' + (PEST_WORDS[mk.pick.pest] || mk.pick.pest) + ', ' + mk.pick.area + ')');
+    mk.pick.techQuestions.forEach(function (q, i) { lines.push((i + 1) + '. ' + q); });
+    lines.push('');
+  });
+  return lines.join('\n');
+}
+
+// ===================== GBP POSTS =====================
+
+function fillPostDates_(staged, cache, warnings) {
+  var now = Date.now();
+  var need = [];
+  staged.forEach(function (st) {
+    st.crawl.posts.forEach(function (p) {
+      var c = cache[p.url];
+      if (!c || (!c.d && now - (c.t || 0) > 30 * 86400000)) need.push(p.url);
+    });
+  });
+  for (var i = 0; i < need.length; i += 20) {
+    var chunk = need.slice(i, i + 20);
+    var reqs = chunk.map(function (u) { return { url: u, muteHttpExceptions: true, followRedirects: true }; });
+    var res;
+    try { res = UrlFetchApp.fetchAll(reqs); } catch (e) { warnings.push('Blog date lookup failed partway: ' + e); break; }
+    res.forEach(function (r, j) {
+      var html = r.getResponseCode() === 200 ? r.getContentText() : '';
+      cache[chunk[j]] = { d: extractDate_(html), title: extractTitle_(html), t: now };
+    });
+  }
+  var undated = 0;
+  staged.forEach(function (st) { st.crawl.posts.forEach(function (p) { if (!(cache[p.url] || {}).d) undated++; }); });
+  if (undated) warnings.push(undated + ' blog post(s) have no readable publish date. They sort after dated posts.');
+}
+
+function extractDate_(html) {
+  if (!html) return null;
+  var pats = [
+    /"datePublished"\s*:\s*"([^"]+)"/i,
+    /article:published_time"[^>]*content="([^"]+)"/i,
+    /content="([^"]+)"[^>]*article:published_time/i,
+    /<time[^>]*datetime="([^"]+)"/i
+  ];
+  for (var i = 0; i < pats.length; i++) {
+    var m = html.match(pats[i]);
+    if (m) { var d = new Date(m[1]); if (!isNaN(d)) return fmtDate_(d); }
+  }
+  var t = html.match(/(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{1,2}),\s+(20\d\d)/);
+  if (t) { var d2 = new Date(t[1] + ' ' + t[2] + ', ' + t[3]); if (!isNaN(d2)) return fmtDate_(d2); }
+  return null;
+}
+
+function extractTitle_(html) {
+  if (!html) return null;
+  var m = html.match(/property="og:title"[^>]*content="([^"]+)"/i) || html.match(/<title[^>]*>([^<]+)<\/title>/i);
+  return m ? m[1].replace(/&amp;/g, '&').replace(/&#39;|&#039;/g, "'").replace(/&quot;/g, '"').replace(/\s*\|.*$/, '').trim() : null;
+}
+
+function pestForSlug_(slug) {
+  var keys = Object.keys(PEST_MATCH);
+  for (var i = 0; i < keys.length; i++) if (slugMatchesPest_(slug, keys[i])) return keys[i];
+  return null;
+}
+
+function statusNow_(cal, pest, month) {
+  var row = cal.rows.filter(function (r) { return r.pest === pest; })[0];
+  return row ? row.status[month] : '';
+}
+
+function inSeason_(cal, pri, m, pest, month) {
+  if (!pest || pest === 'General pest') return true;
+  var s = statusNow_(cal, pest, month);
+  return s === 'PEAK' || s === 'ACTIVE' || !!priorityFor_(pri, m, pest);
+}
+
+function photoTag_(m, pest, area) {
+  var parts = [SERVICE_SLUG[pest] || 'mosquito-control'];
+  var a = area ? area.toLowerCase().replace(/[^a-z0-9]+/g, '-') : '';
+  if (a) parts.push(a);
+  if (m.city && m.city !== a) parts.push(m.city);
+  parts.push(m.state);
+  return parts.join('-');
+}
+
+function recentGbp_(history, market, monday, weeks) {
+  var thisWeek = fmtDate_(monday);
+  var cutoff = new Date(monday.getTime() - weeks * 7 * 86400000);
+  var out = [];
+  history.weeks.forEach(function (w) {
+    if (w.weekOf === thisWeek || new Date(w.weekOf) < cutoff) return;
+    (w.gbp || []).forEach(function (g) { if (g.market === market) out.push(g); });
+  });
+  return out;
+}
+
+function buildGbp_(st, monday, history, pri, promoted, postDates) {
+  var m = st.m, cal = st.cal, month = monday.getMonth(), week = fmtDate_(monday);
+
+  // ---- Post 1: newest published blog that hasn't had a GBP post
+  var posts = st.crawl.posts.map(function (p, i) {
+    var c = postDates[p.url] || {};
+    var pest = pestForSlug_(p.slug);
+    var area = null;
+    m.areas.forEach(function (a) { if (!area && slugMatchesArea_(p.slug, a)) area = areaName_(a); });
+    return {
+      url: p.url, date: c.d || null, order: i,
+      title: c.title || p.slug.replace(/-/g, ' ').replace(/\b\w/g, function (x) { return x.toUpperCase(); }),
+      pest: pest, area: area, inSeason: inSeason_(cal, pri, m, pest, month)
+    };
+  });
+  posts.sort(function (a, b) {
+    if (a.date && b.date) return a.date < b.date ? 1 : a.date > b.date ? -1 : a.order - b.order;
+    if (a.date) return -1;
+    if (b.date) return 1;
+    return a.order - b.order;
+  });
+  var open = posts.filter(function (p) { return !promoted[p.url] || promoted[p.url] === week; });
+  // In-season posts first, newest first; off-season posts only if nothing in season is left
+  var candidates = open.filter(function (p) { return p.inSeason; }).concat(open.filter(function (p) { return !p.inSeason; })).slice(0, 12);
+  candidates.forEach(function (p) {
+    p.photoTag = photoTag_(m, p.pest || 'General pest', p.area);
+    p.skippedOffSeason = !p.inSeason;
+  });
+
+  // ---- Post 2: weakest Falcon keyword among pests in season, no repeats from the last 2 weeks
+  var recent = recentGbp_(history, m.tab, monday, CONFIG.GBP_REPEAT_WEEKS);
+  var usedPests = recent.map(function (g) { return g.pest; });
+  var usedKw = recent.map(function (g) { return g.keyword; });
+  var usedAreas = recent.map(function (g) { return g.area; });
+  var p1 = candidates[0] || null;
+  var blockPests = [p1 && p1.pest, st.pick && st.pick.pest].filter(Boolean);
+
+  var best = {};
+  ((st.fal && st.fal.keywords) || []).forEach(function (k) {
+    var kw = String(k.keyword || '');
+    if (/squad/i.test(kw)) return;
+    var slug = kw.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+    var pest = pestForSlug_(slug) || (/pest|exterminat|bug/i.test(kw) ? 'General pest' : null);
+    if (!pest) return;
+    if (!inSeason_(cal, pri, m, pest, month)) return;
+    if (usedPests.indexOf(pest) >= 0 || usedKw.indexOf(kw) >= 0) return;
+    if (blockPests.indexOf(pest) >= 0) return;
+    var solv = k.solv == null ? 50 : k.solv;
+    var score = 100 - solv;
+    var why = ['Falcon: "' + kw + '" SoLV ' + (k.solv == null ? 'unknown' : k.solv + '%') + '.'];
+    if (k.solvMove !== null && k.solvMove < 0) { score += Math.min(-k.solvMove * 3, 30); why.push('Dropped ' + k.solvMove + ' on the last scan.'); }
+    var level = pest === 'General pest' ? null : priorityFor_(pri, m, pest);
+    if (level === 'primary') { score += 15; why.push('Primary push on the Monthly Priority tab.'); }
+    else if (level === 'listed') { score += 8; why.push('Listed on the Monthly Priority tab.'); }
+    var now = pest === 'General pest' ? '' : statusNow_(cal, pest, month);
+    if (now === 'PEAK') { score += 10; why.push(MONTHS[month] + ' is peak.'); }
+    else if (now === 'ACTIVE') { score += 5; why.push(MONTHS[month] + ' is active.'); }
+    if (pest === 'General pest') { score += 5; why.push('General pest term, in season year-round.'); }
+    if (!best[pest] || score > best[pest].score) best[pest] = { pest: pest, keyword: kw, solv: k.solv, solvMove: k.solvMove, score: score, why: why };
+  });
+  var ranked = Object.keys(best).map(function (k) { return best[k]; }).sort(function (a, b) { return b.score - a.score; });
+  var p2 = ranked[0] || null;
+
+  if (!p2) {
+    // No Falcon keyword qualifies: fall back to the strongest in-season calendar pest not used lately
+    var fb = st.scored.filter(function (c) { return usedPests.indexOf(c.pest) < 0 && blockPests.indexOf(c.pest) < 0; })[0];
+    if (fb) p2 = { pest: fb.pest, keyword: null, solv: null, solvMove: null, score: fb.score,
+      why: ['No tracked Falcon keyword is in season and unused, so this is the top seasonal pest instead.'] };
+  }
+
+  if (p2) {
+    var avoid = usedAreas.concat([p1 && p1.area]).filter(Boolean);
+    if (st.pick) avoid.push(areaName_(pickAreaKey_(m, st.pick.pest, st.crawl)));
+    var lastUse = {};
+    history.weeks.forEach(function (w, idx) {
+      (w.gbp || []).forEach(function (g) { if (g.market === m.tab && g.area) lastUse[g.area] = idx; });
+    });
+    var areas = m.areas.map(areaName_);
+    var pool = areas.filter(function (a) { return avoid.indexOf(a) < 0; });
+    if (!pool.length) pool = areas;
+    pool.sort(function (a, b) {
+      var la = lastUse[a] === undefined ? -1 : lastUse[a], lb = lastUse[b] === undefined ? -1 : lastUse[b];
+      return la - lb || areas.indexOf(a) - areas.indexOf(b);
+    });
+    p2.area = pool[0];
+    p2.words = PEST_WORDS[p2.pest] || 'pest control';
+    p2.photoTag = photoTag_(m, p2.pest, p2.area);
+    var row = cal.rows.filter(function (r) { return r.pest === p2.pest; })[0];
+    p2.angle = row ? row.notes : '';
+    p2.recentlyUsed = { pests: usedPests, keywords: usedKw.filter(Boolean), areas: usedAreas.filter(Boolean) };
+  }
+
+  // ---- Is it working? SoLV when a keyword was first targeted vs now
+  var track = {};
+  history.weeks.forEach(function (w) {
+    (w.gbp || []).forEach(function (g) {
+      if (g.market !== m.tab || !g.keyword) return;
+      if (!track[g.keyword]) track[g.keyword] = { keyword: g.keyword, firstWeek: w.weekOf, solvThen: g.solv, times: 0 };
+      track[g.keyword].times++;
+    });
+  });
+  var trackList = Object.keys(track).map(function (k) {
+    var cur = ((st.fal && st.fal.keywords) || []).filter(function (x) { return x.keyword === k; })[0];
+    track[k].solvNow = cur ? cur.solv : null;
+    return track[k];
+  });
+
+  return {
+    post1Candidates: candidates,
+    recentPosts: posts.slice(0, CONFIG.BASELINE_COUNT),
+    post2: p2,
+    tracking: trackList
+  };
+}
+
+function pickAreaKey_(m, pest, crawl) {
+  return pickArea_(m, pest, crawl).key;
+}
+
+// ===================== DATES =====================
+
+function targetMonday_(d) {
+  var x = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  var dow = x.getDay();                      // 0 Sun .. 6 Sat
+  var add = dow === 1 ? 0 : (8 - dow) % 7;   // today if Monday, else next Monday
+  x.setDate(x.getDate() + add);
+  return x;
+}
+
+function nextOccurrence_(start, monday) {
+  var d = new Date(monday.getFullYear(), start.month, start.day);
+  if (daysBetween_(monday, d) < -CONFIG.LATE_LOOKBACK_DAYS) d = new Date(monday.getFullYear() + 1, start.month, start.day);
+  return d;
+}
+
+function daysBetween_(a, b) {
+  return Math.round((Date.UTC(b.getFullYear(), b.getMonth(), b.getDate()) - Date.UTC(a.getFullYear(), a.getMonth(), a.getDate())) / 86400000);
+}
+
+function fmtDate_(d) {
+  return Utilities.formatDate(d, Session.getScriptTimeZone(), 'yyyy-MM-dd');
+}
+
+// ===================== HISTORY + DRIVE =====================
+
+function recentPicks_(history, market, monday, weeks) {
+  var cutoff = new Date(monday.getTime() - weeks * 7 * 86400000);
+  var thisWeek = fmtDate_(monday);
+  var out = [];
+  history.weeks.forEach(function (w) {
+    if (w.weekOf === thisWeek) return;       // re-running the same week doesn't block itself
+    if (new Date(w.weekOf) < cutoff) return;
+    (w.picks || []).forEach(function (p) { if (p.market === market) out.push(p.pest); });
+  });
+  return out;
+}
+
+function saveHistory_(history, monday, markets) {
+  var week = fmtDate_(monday);
+  history.weeks = history.weeks.filter(function (w) { return w.weekOf !== week; });
+  history.weeks.push({
+    weekOf: week,
+    picks: markets.filter(function (m) { return m.pick; }).map(function (m) {
+      return { market: m.market, pest: m.pick.pest, area: m.pick.area, status: 'proposed' };
+    }),
+    gbp: markets.filter(function (m) { return m.gbp && m.gbp.post2; }).map(function (m) {
+      var p2 = m.gbp.post2;
+      return { market: m.market, pest: p2.pest, keyword: p2.keyword, area: p2.area, solv: p2.solv };
+    })
+  });
+  history.weeks = history.weeks.slice(-52);
+  writeJsonFile_(CONFIG.HISTORY_FILE, history);
+}
+
+function readJsonFile_(name) {
+  var files = DriveApp.getFilesByName(name);
+  if (!files.hasNext()) return null;
+  try { return JSON.parse(files.next().getBlob().getDataAsString()); } catch (e) { return null; }
+}
+
+function writeJsonFile_(name, obj) {
+  var text = JSON.stringify(obj, null, 2);
+  var files = DriveApp.getFilesByName(name);
+  if (files.hasNext()) files.next().setContent(text);
+  else DriveApp.createFile(name, text, 'application/json');
+}
+
+// ===================== LOGGING + TRIGGER =====================
+
+function logSummary_(out) {
+  Logger.log('WEEK OF ' + out.weekOf);
+  out.warnings.forEach(function (w) { Logger.log('WARNING: ' + w); });
+  if (out.falconCheck) Logger.log('Falcon self-check: ' + out.falconCheck.reportsChecked + ' scans recomputed, ' + out.falconCheck.mismatches.length + ' mismatches');
+  out.markets.forEach(function (m) {
+    if (!m.pick) { Logger.log(m.market + ': nothing strong this week'); return; }
+    Logger.log('---- ' + m.market + (m.verified ? '' : ' (UNVERIFIED LIST)') + ' | ' + m.postCount + ' posts, ' + m.pagesCrawled + ' pages');
+    Logger.log('PICK: ' + m.pick.pest + ' in ' + m.pick.area + ' [' + m.pick.mode + ', score ' + m.pick.score + ']' + (m.pick.liveBy ? ' live by ' + m.pick.liveBy : ''));
+    Logger.log('  Why: ' + m.pick.why.join(' '));
+    Logger.log('  Area: ' + m.pick.areaReason);
+    if (m.pick.caution) Logger.log('  CAUTION: ' + m.pick.caution);
+    Logger.log('  Line: ' + m.pick.productionLine);
+    m.alternates.forEach(function (a) { Logger.log('  Alt: ' + a.pest + ' in ' + a.area + ' [' + a.mode + ', ' + a.score + ']'); });
+    if (m.gbp) {
+      var c1 = m.gbp.post1Candidates[0];
+      Logger.log('  GBP 1: ' + (c1 ? c1.title + (c1.date ? ' (' + c1.date + ')' : ' (no date)') + ' ' + c1.url : 'no unpromoted blog'));
+      var g2 = m.gbp.post2;
+      Logger.log('  GBP 2: ' + (g2 ? g2.pest + ' in ' + g2.area + (g2.keyword ? ' | keyword "' + g2.keyword + '"' : '') + ' | ' + g2.why.join(' ') : 'nothing qualifies'));
+    }
+  });
+  Logger.log('\n' + out.fieldAsk);
+}
+
+function setupWeeklyTrigger() {
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    if (t.getHandlerFunction() === 'buildPlan') ScriptApp.deleteTrigger(t);
+  });
+  ScriptApp.newTrigger('buildPlan').timeBased().onWeekDay(ScriptApp.WeekDay.MONDAY).atHour(5).create();
+  Logger.log('Weekly trigger set: buildPlan runs every Monday around 5am.');
+}
