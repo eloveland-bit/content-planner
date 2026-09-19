@@ -131,6 +131,20 @@ details ul { margin: 0; padding-left: 18px; }
 .kw th { color: var(--muted); font-weight: 600; }
 .down { color: var(--amber); }
 
+/* Brand tabs */
+.brands { display: inline-flex; border: 1px solid var(--rule); border-radius: 8px; overflow: hidden; margin: 22px 0 0; background: var(--panel); flex-wrap: wrap; }
+.brands button { border: 0; background: transparent; padding: 9px 16px; font: 600 15px/1.2 var(--body); cursor: pointer; color: var(--muted); }
+.brands button + button { border-left: 1px solid var(--rule); }
+.brands button[aria-selected="true"] { background: var(--pine); color: var(--paper); }
+.market .gbp.solo { margin-top: 0; padding-top: 0; border-top: 0; }
+.wait { background: var(--slate-soft); border-radius: 8px; padding: 12px 14px; font-size: 15px; max-width: 72ch; }
+.settings { margin-top: 36px; }
+.settings .srow { display: grid; grid-template-columns: 160px 1fr auto; gap: 10px 14px; align-items: center; padding: 8px 0; border-top: 1px solid var(--rule); }
+.settings .srow:first-of-type { border-top: 0; }
+.settings input[type="text"] { width: 100%; border: 1px solid var(--rule); background: var(--paper); border-radius: 6px; padding: 6px 10px; font-size: 14px; }
+.settings label.chk { display: flex; gap: 6px; align-items: center; font-size: 14px; white-space: nowrap; }
+@media (max-width: 720px) { .settings .srow { grid-template-columns: 1fr; } }
+
 /* Field notes */
 .notes { margin-top: 12px; max-width: 76ch; border: 1px solid var(--rule); border-radius: 6px; background: var(--panel); }
 .notes > summary { list-style: none; padding: 8px 12px; display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; color: var(--ink); }
@@ -225,21 +239,30 @@ footer { color: var(--muted); font-size: 13px; padding: 40px 0 60px; }
   <section class="week">
     <h1 id="weekTitle"></h1>
     <p id="weekSub"></p>
+    <div class="brands" role="tablist" id="brandTabs">
+      <button type="button" role="tab" data-brand="ms">Mosquito Squad</button>
+      <button type="button" role="tab" data-brand="ls">Lawn Squad</button>
+      <button type="button" role="tab" data-brand="nal">New Age Lights</button>
+    </div>
     <ul class="notices" id="notices"></ul>
     <div class="bar">
-      <button class="btn primary" id="copyLines" type="button">Copy production lines</button>
+      <button class="btn primary ms-only" id="copyLines" type="button">Copy production lines</button>
       <button class="btn" id="copyGbp" type="button">Copy GBP briefs</button>
-      <button class="btn" id="copyAskAll" type="button">Copy all field questions</button>
+      <button class="btn ms-only" id="copyAskAll" type="button">Copy all field questions</button>
     </div>
   </section>
 
   <div id="markets"></div>
 
+  <div class="ms-only">
   <h2 class="section-title">Field team</h2>
   <p class="section-note">Add each person you ask for field input and check the markets they cover. Their questions stay grouped so nobody gets more than their own markets.</p>
   <div class="people" id="people"></div>
   <div class="bar"><button class="btn" id="addPerson" type="button">Add person</button></div>
   <div id="unassigned"></div>
+  </div>
+
+  <section id="settingsBox"></section>
 
   <footer id="foot"></footer>
 </main>
@@ -475,6 +498,98 @@ function fmtDay(iso) {
   return new Date(y, mo - 1, d).toLocaleDateString(undefined, { month: 'long', day: 'numeric' });
 }
 
+/* ================= BRANDS ================= */
+const BRAND_NAMES = { ms: 'Mosquito Squad', ls: 'Lawn Squad', nal: 'New Age Lights' };
+let brand = 'ms';
+try { brand = localStorage.getItem('cp-brand') || 'ms'; } catch (e) {}
+if (!BRAND_NAMES[brand]) brand = 'ms';
+
+function mkey(m) { return (m.brand && m.brand !== 'ms') ? m.brand + ':' + m.market : m.market; }
+function brandMarkets() {
+  if (brand === 'ms') return plan.markets;
+  return (plan.brands && plan.brands[brand]) ? plan.brands[brand].markets : [];
+}
+function findMarket(key) { return brandMarkets().find(x => mkey(x) === key); }
+
+document.querySelectorAll('#brandTabs button').forEach(b => {
+  b.onclick = () => {
+    brand = b.getAttribute('data-brand');
+    try { localStorage.setItem('cp-brand', brand); } catch (e) {}
+    if (plan) { render(); window.scrollTo(0, 0); }
+  };
+});
+
+function settingsFor(b, market) {
+  const s = decisions.settings || {};
+  return {
+    areas: s.areas && s.areas[b] && s.areas[b][market],
+    unverified: !!(s.unverified && s.unverified[b] && s.unverified[b][market])
+  };
+}
+
+function renderSettings() {
+  const list = brandMarkets().filter(m => m.market);
+  if (!list.length) { $('settingsBox').innerHTML = ''; return; }
+  $('settingsBox').innerHTML = '<details class="notes settings"><summary>Areas and Google verification for ' + esc(BRAND_NAMES[brand]) +
+    '<span class="count">Changes apply the next time the plan runs</span></summary><div class="body">' +
+    list.map(m => {
+      const cur = settingsFor(brand, m.market);
+      const areas = (cur.areas && cur.areas.length ? cur.areas : (m.areas || [])).join(', ');
+      return '<div class="srow" data-m="' + esc(m.market) + '"><strong>' + esc(m.market) + '</strong>' +
+        '<input type="text" value="' + esc(areas) + '" aria-label="Areas for ' + esc(m.market) + '" placeholder="Comma-separated areas">' +
+        '<label class="chk"><input type="checkbox"' + (cur.unverified ? '' : ' checked') + '> Verified on Google</label></div>';
+    }).join('') +
+    '<div class="controls" style="margin-top:12px"><button class="btn primary" type="button" id="saveSettings">Save settings</button></div>' +
+    '<p class="hint">Areas are comma-separated. Unchecking "Verified on Google" pauses GBP picks for that market and keeps its Falcon numbers out of the scoring until you check it again.</p>' +
+    '</div></details>';
+  $('saveSettings').onclick = () => {
+    decisions.settings = decisions.settings || {};
+    const s = decisions.settings;
+    s.areas = s.areas || {}; s.unverified = s.unverified || {};
+    s.areas[brand] = s.areas[brand] || {}; s.unverified[brand] = s.unverified[brand] || {};
+    document.querySelectorAll('#settingsBox .srow').forEach(row => {
+      const name = row.getAttribute('data-m');
+      const vals = row.querySelector('input[type="text"]').value.split(',').map(x => x.trim()).filter(Boolean);
+      const m = brandMarkets().find(x => x.market === name);
+      const defaults = ((m && m.areas) || []).join('|').toLowerCase();
+      const changed = vals.join('|').toLowerCase() !== defaults;
+      // only store real edits, so untouched markets keep following their defaults (and NAL's live menu)
+      if (vals.length && changed) s.areas[brand][name] = vals;
+      else if (!vals.length) delete s.areas[brand][name];
+      if (row.querySelector('input[type="checkbox"]').checked) delete s.unverified[brand][name];
+      else s.unverified[brand][name] = true;
+    });
+    scheduleSave();
+    copyToast('Settings saved. They apply on the next plan run.');
+  };
+}
+
+function copyToast(msg) {
+  const t = $('toast'); t.textContent = msg; t.classList.add('show');
+  clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove('show'), 2200);
+}
+
+function renderServiceMarket(m) {
+  const facts = [
+    m.postCount + (m.postCount === 1 ? ' local post' : ' local posts'),
+    m.profileVerified === false ? '<span class="flag">Not verified on Google</span>' : '',
+    m.crawlOk === false ? '<span class="flag">Blog crawl needs a look</span>' : ''
+  ].filter(Boolean).join('<br>');
+  const rail = '<div class="rail"><h2>' + esc(m.market) + '</h2><div class="facts">' + facts + '</div></div>';
+  let main;
+  if (m.error) main = '<p>' + esc(m.error) + '</p>';
+  else if (m.photosOnly) {
+    main = '<div class="gbp solo"><h3>Photo tags this week</h3><p class="gsub">GBP posting here is handled by a corporate manager. Photo tagging only.</p>' +
+      (m.photoTags || []).map((t, i) => '<div class="gpost"><div class="gkind">' + esc(t.service) + '</div><div>' +
+        '<span class="tagline">' + esc(t.photoTag) + '</span>' +
+        '<div class="controls"><button class="btn" type="button" data-act="ptag" data-i="' + i + '">Copy photo tag</button></div></div></div>').join('') +
+      '</div>';
+  } else if (m.gbp && m.gbp.waiting) {
+    main = '<p class="wait">Waiting on Google verification. No GBP posts are assigned and Falcon numbers are ignored until you check "Verified on Google" in the settings below.</p>';
+  } else main = renderGbp(m, true);
+  return '<section class="market" data-market="' + esc(mkey(m)) + '">' + rail + '<div class="main">' + main + '</div></section>';
+}
+
 /* ================= FIELD NOTES ================= */
 function earlierNotes(market) {
   return Object.keys(decisions.weeks).filter(w => w !== plan.weekOf).sort().reverse()
@@ -519,15 +634,16 @@ function gbpPost1(m) {
   return (m.gbp.post1Candidates || []).find(p => !decisions.promoted[p.url] || decisions.promoted[p.url] === wk) || null;
 }
 function gbpBrief1(m, p) {
-  return 'GBP post, ' + m.market + ': promote "' + p.title + '" (' + p.url + ').' +
+  return 'GBP post, ' + BRAND_NAMES[m.brand || 'ms'] + ' ' + m.market + ': promote "' + p.title + '" (' + p.url + ').' +
     (p.area ? ' Area: ' + p.area + '.' : '') + ' Photo tag: ' + p.photoTag;
 }
 function gbpBrief2(m, g) {
-  return 'GBP post, ' + m.market + ': ' + g.words + ' in ' + g.area + '.' +
+  return 'GBP post, ' + BRAND_NAMES[m.brand || 'ms'] + ' ' + m.market + ': ' + g.words + ' in ' + g.area + '.' +
     (g.keyword ? ' Target keyword: ' + g.keyword + (g.solv != null ? ' (SoLV ' + g.solv + '%)' : '') + '.' : '') +
     (g.angle ? ' Angle: ' + g.angle : '') + ' Photo tag: ' + g.photoTag;
 }
 function gbpBriefs(m) {
+  if (!m.gbp || m.gbp.waiting) return [];
   const out = [];
   const p1 = gbpPost1(m);
   if (p1) out.push(gbpBrief1(m, p1));
@@ -535,12 +651,14 @@ function gbpBriefs(m) {
   return out;
 }
 
-function renderGbp(m) {
+function renderGbp(m, solo) {
   if (!m.gbp) return '';
-  const st = marketState(m.market);
-  let html = '<div class="gbp"><h3>GBP posts this week</h3>';
+  if (m.gbp.waiting) return '<div class="gbp"><h3>GBP posts this week</h3><p class="wait">Waiting on Google verification. Check "Verified on Google" in the settings below once it goes through.</p></div>';
+  const key = mkey(m);
+  const st = marketState(key);
+  let html = '<div class="gbp' + (solo ? ' solo' : '') + '"><h3>GBP posts this week</h3>';
 
-  if (!decisions.baselineDone[m.market] && (m.gbp.recentPosts || []).length) {
+  if (!decisions.baselineDone[key] && (m.gbp.recentPosts || []).length) {
     html += '<div class="baseline" data-baseline><p>One-time setup: check the blogs that already have a GBP post, so the planner starts from the right place.</p>' +
       m.gbp.recentPosts.map(p => '<label><input type="checkbox" value="' + esc(p.url) + '"' + (decisions.promoted[p.url] ? ' checked' : '') + '><span>' +
         esc(p.title) + (p.date ? ' (' + esc(fmtDay(p.date)) + ')' : '') + '</span></label>').join('') +
@@ -561,7 +679,9 @@ function renderGbp(m) {
       '<button class="btn" type="button" data-act="g1done" aria-pressed="' + done + '">' + (done ? 'Posted' : 'Mark posted') + '</button></div>' +
       '</div></div>';
   } else {
-    html += '<div class="gpost"><div class="gkind">Promote a blog</div><div><p class="gsub">Every blog in this market already has a GBP post. Use this slot for a second Falcon post or a photo update.</p></div></div>';
+    html += '<div class="gpost"><div class="gkind">Promote a blog</div><div><p class="gsub">' +
+      (m.postCount ? 'Every local blog in this market already has a GBP post.' : 'No local blog posts found for this market yet.') +
+      ' Use this slot for a second Falcon post or a photo update.</p></div></div>';
   }
 
   const g = m.gbp.post2;
@@ -593,12 +713,22 @@ function render() {
   $('weekTitle').textContent = 'Week of ' + fmtDay(plan.weekOf);
   const gen = new Date(plan.generatedAt);
   $('weekSub').textContent = 'Plan built ' + gen.toLocaleString(undefined, { weekday: 'long', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) +
-    '. Lock the blog picks you are writing, swap anything that does not fit, send the field questions, and mark GBP posts as they go up.';
+    (brand === 'ms' ? '. Lock the blog picks you are writing, swap anything that does not fit, send the field questions, and mark GBP posts as they go up.'
+                    : '. Two GBP posts per market. Mark each one posted as it goes up.');
   $('notices').innerHTML = (plan.warnings || []).map(w => '<li>' + esc(w) + '</li>').join('');
 
-  $('markets').innerHTML = plan.markets.map(renderMarket).join('');
+  document.querySelectorAll('#brandTabs button').forEach(b => b.setAttribute('aria-selected', b.getAttribute('data-brand') === brand));
+  document.querySelectorAll('.ms-only').forEach(el => el.classList.toggle('hidden', brand !== 'ms'));
+  if (brand === 'ms') {
+    $('markets').innerHTML = plan.markets.map(renderMarket).join('');
+    renderTeam();
+  } else if (!plan.brands || !plan.brands[brand]) {
+    $('markets').innerHTML = '<p class="wait">No ' + esc(BRAND_NAMES[brand]) + ' data yet. Run buildPlan once in Apps Script with the updated backend, then reload.</p>';
+  } else {
+    $('markets').innerHTML = brandMarkets().map(renderServiceMarket).join('');
+  }
   bindMarkets();
-  renderTeam();
+  renderSettings();
 
   const fc = plan.falconCheck;
   $('foot').innerHTML = esc(plan.rule || '') +
@@ -618,7 +748,7 @@ function renderMarket(m) {
   const rail = '<div class="rail"><h2>' + esc(m.market) + '</h2><div class="facts">' + facts + '</div></div>';
 
   if (!c) {
-    return '<section class="market" data-market="' + esc(m.market) + '">' + rail + '<div class="main"><p class="pick">Nothing strong this week</p>' +
+    return '<section class="market" data-market="' + esc(mkey(m)) + '">' + rail + '<div class="main"><p class="pick">Nothing strong this week</p>' +
       '<p class="meta">No pest is due, late, or in season without coverage. Skip this market or pick your own topic.</p>' + renderGbp(m) + '</div></section>';
   }
 
@@ -639,7 +769,7 @@ function renderMarket(m) {
         '</td><td>' + esc(k.lastDate || '') + '</td></tr>').join('') + '</tbody></table>'
     : '<p>No Local Falcon data for this market.</p>';
 
-  return '<section class="market' + (st.status === 'skipped' ? ' skipped' : '') + '" data-market="' + esc(m.market) + '">' + rail +
+  return '<section class="market' + (st.status === 'skipped' ? ' skipped' : '') + '" data-market="' + esc(mkey(m)) + '">' + rail +
     '<div class="main">' +
       '<p class="pick">' + esc(c.pest) + ' in ' + esc(c.area) + '</p>' +
       '<div class="meta">' + modeTag(c) +
@@ -672,12 +802,14 @@ function renderMarket(m) {
 function bindMarkets() {
   document.querySelectorAll('.market[data-market]').forEach(sec => {
     const name = sec.getAttribute('data-market');
-    const m = plan.markets.find(x => x.market === name);
+    const m = findMarket(name);
+    if (!m) return;
     sec.addEventListener('click', (e) => {
       const b = e.target.closest('button[data-act]');
       if (!b) return;
       const st = marketState(name);
       const act = b.getAttribute('data-act');
+      if (act === 'ptag') return copy(m.photoTags[Number(b.getAttribute('data-i'))].photoTag, 'Photo tag copied');
       if (act === 'g1copy') return copy(gbpBrief1(m, gbpPost1(m)), 'Brief copied');
       if (act === 'g1tag') return copy(gbpPost1(m).photoTag, 'Photo tag copied');
       if (act === 'g2copy') return copy(gbpBrief2(m, m.gbp.post2), 'Brief copied');
@@ -800,7 +932,7 @@ $('copyLines').onclick = () => {
   copy(use.map(m => current(m).productionLine).join('\n\n'), (locked.length ? 'Locked lines' : 'All lines') + ' copied');
 };
 $('copyGbp').onclick = () => {
-  const lines = plan.markets.filter(m => !m.error).flatMap(gbpBriefs);
+  const lines = brandMarkets().filter(m => !m.error).flatMap(gbpBriefs);
   copy(lines.join('\n\n'), 'GBP briefs copied');
 };
 $('copyAskAll').onclick = () => copy(askFor(activeMarkets().map(m => m.market), ''), 'Questions copied');
