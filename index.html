@@ -1,0 +1,721 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Content Planner</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Condensed:wght@500;600;700&display=swap" rel="stylesheet">
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<style>
+:root {
+  --paper: #F5F6F2;
+  --panel: #FFFFFF;
+  --ink: #1B2622;
+  --muted: #5E6B66;
+  --rule: #D6DCD6;
+  --pine: #1E5A47;
+  --pine-soft: #E3EEE8;
+  --amber: #9A6414;
+  --amber-soft: #FBF0DA;
+  --slate: #3E5A6E;
+  --slate-soft: #E6EDF2;
+  --focus: #2F7DE1;
+  --display: 'Barlow Condensed', 'Arial Narrow', 'Helvetica Neue', Arial, sans-serif;
+  --body: 'Barlow', 'Helvetica Neue', Arial, sans-serif;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #121916; --panel: #18211D; --ink: #E6ECE8; --muted: #9AA8A2; --rule: #2A3631;
+    --pine: #6FC2A0; --pine-soft: #1C2E27; --amber: #E8B04B; --amber-soft: #2E2615;
+    --slate: #9CC0DA; --slate-soft: #1B2833; --focus: #7FB2FF; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --paper: #121916; --panel: #18211D; --ink: #E6ECE8; --muted: #9AA8A2; --rule: #2A3631;
+  --pine: #6FC2A0; --pine-soft: #1C2E27; --amber: #E8B04B; --amber-soft: #2E2615;
+  --slate: #9CC0DA; --slate-soft: #1B2833; --focus: #7FB2FF; color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  background: var(--paper);
+  color: var(--ink);
+  font: 16px/1.5 var(--body);
+  -webkit-font-smoothing: antialiased;
+}
+a { color: var(--pine); }
+button, select, input { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.wrap { max-width: 1040px; margin: 0 auto; padding: 0 20px; }
+
+/* Header */
+header.top {
+  border-bottom: 1px solid var(--rule);
+  background: var(--paper);
+  position: sticky; top: 0; z-index: 5;
+}
+.top .wrap { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding-top: 14px; padding-bottom: 14px; flex-wrap: wrap; }
+.brand { font: 600 15px/1 var(--body); color: var(--muted); }
+.tools { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.btn {
+  border: 1px solid var(--rule); background: var(--panel); border-radius: 6px;
+  padding: 7px 12px; cursor: pointer; font-size: 14px; font-weight: 500; line-height: 1.2;
+}
+.btn:hover { border-color: var(--muted); }
+.btn.primary { background: var(--pine); border-color: var(--pine); color: var(--paper); }
+.btn.quiet { background: transparent; }
+.btn[aria-pressed="true"] { background: var(--pine-soft); border-color: var(--pine); color: var(--pine); }
+
+/* Week title */
+.week { padding: 36px 0 8px; }
+.week h1 {
+  font: 700 clamp(40px, 7vw, 72px)/0.95 var(--display);
+  letter-spacing: -0.01em; margin: 0;
+}
+.week p { color: var(--muted); margin: 10px 0 0; max-width: 64ch; }
+
+.notices { margin: 20px 0 0; padding: 0; list-style: none; }
+.notices li {
+  border-left: 3px solid var(--amber); background: var(--amber-soft);
+  padding: 8px 12px; margin-bottom: 6px; font-size: 14px; border-radius: 0 4px 4px 0;
+}
+.bar { display: flex; gap: 8px; flex-wrap: wrap; margin: 24px 0 8px; }
+
+/* Market ledger */
+.market {
+  display: grid; grid-template-columns: 180px 1fr; gap: 24px;
+  border-top: 1px solid var(--rule); padding: 28px 0;
+}
+.market:last-of-type { border-bottom: 1px solid var(--rule); }
+.rail h2 { font: 600 24px/1.1 var(--display); margin: 0 0 6px; }
+.rail .facts { font-size: 13px; color: var(--muted); line-height: 1.6; }
+.rail .flag { color: var(--amber); font-weight: 600; }
+.market.skipped .main { opacity: 0.45; }
+
+.pick { font: 700 clamp(30px, 4.4vw, 44px)/1.02 var(--display); margin: 0; }
+.meta { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin: 10px 0 12px; font-size: 14px; color: var(--muted); }
+.tag { font-size: 13px; font-weight: 600; padding: 2px 8px; border-radius: 4px; }
+.tag.due { background: var(--pine-soft); color: var(--pine); }
+.tag.late { background: var(--amber-soft); color: var(--amber); }
+.tag.season { background: var(--slate-soft); color: var(--slate); }
+.tag.locked { background: var(--pine); color: var(--paper); }
+
+.why { margin: 0 0 14px; padding: 0; list-style: none; max-width: 70ch; }
+.why li { padding-left: 14px; position: relative; font-size: 15px; }
+.why li::before { content: ''; position: absolute; left: 0; top: 0.7em; width: 5px; height: 5px; border-radius: 50%; background: var(--muted); }
+
+.line {
+  background: var(--panel); border: 1px solid var(--rule); border-radius: 6px;
+  padding: 12px 14px; font-size: 15px; margin: 0 0 12px; max-width: 76ch;
+}
+.caution { border-left: 3px solid var(--amber); padding: 6px 12px; background: var(--amber-soft); font-size: 14px; margin: 0 0 12px; max-width: 76ch; }
+.controls { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.controls label { font-size: 14px; color: var(--muted); display: flex; gap: 6px; align-items: center; }
+.controls select { border: 1px solid var(--rule); background: var(--panel); border-radius: 6px; padding: 6px 8px; font-size: 14px; }
+
+.alts { margin-top: 14px; font-size: 14px; color: var(--muted); display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.alts .btn { font-size: 13px; padding: 5px 10px; }
+
+details { margin-top: 14px; font-size: 14px; }
+summary { cursor: pointer; color: var(--muted); font-weight: 500; }
+details .inner { padding: 10px 0 0; display: grid; gap: 10px; max-width: 76ch; }
+details h4 { margin: 0 0 2px; font-size: 13px; font-weight: 600; color: var(--muted); }
+details ul { margin: 0; padding-left: 18px; }
+.kw { width: 100%; border-collapse: collapse; font-size: 13px; }
+.kw td, .kw th { text-align: left; padding: 4px 8px 4px 0; border-bottom: 1px solid var(--rule); }
+.kw th { color: var(--muted); font-weight: 600; }
+.down { color: var(--amber); }
+
+/* GBP */
+.gbp { margin-top: 22px; padding-top: 18px; border-top: 1px dashed var(--rule); }
+.gbp h3 { font: 600 20px/1.1 var(--display); margin: 0 0 12px; }
+.gpost { display: grid; grid-template-columns: 120px 1fr; gap: 12px; padding: 10px 0; }
+.gpost + .gpost { border-top: 1px solid var(--rule); }
+.gkind { font-size: 13px; font-weight: 600; color: var(--muted); padding-top: 2px; }
+.gtitle { font-weight: 600; margin: 0 0 4px; }
+.gsub { font-size: 14px; color: var(--muted); margin: 0 0 8px; max-width: 72ch; }
+.tagline { font-size: 13px; background: var(--panel); border: 1px solid var(--rule); border-radius: 4px; padding: 2px 8px; display: inline-block; margin: 0 6px 8px 0; word-break: break-all; }
+.gpost.done .gtitle { text-decoration: line-through; color: var(--muted); }
+.baseline { background: var(--slate-soft); border-radius: 8px; padding: 12px 14px; margin-bottom: 12px; font-size: 14px; }
+.baseline p { margin: 0 0 8px; }
+.baseline label { display: flex; gap: 8px; align-items: flex-start; margin: 4px 0; }
+.track { font-size: 13px; color: var(--muted); margin: 8px 0 0; }
+@media (max-width: 720px) { .gpost { grid-template-columns: 1fr; gap: 4px; } }
+
+/* Field team */
+.section-title { font: 700 32px/1 var(--display); margin: 48px 0 6px; }
+.section-note { color: var(--muted); margin: 0 0 18px; max-width: 64ch; }
+.people { display: grid; gap: 12px; }
+.person { background: var(--panel); border: 1px solid var(--rule); border-radius: 8px; padding: 14px 16px; }
+.person-head { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
+.person-head input { border: 1px solid var(--rule); background: var(--paper); border-radius: 6px; padding: 6px 10px; min-width: 200px; }
+.checks { display: flex; gap: 6px 14px; flex-wrap: wrap; font-size: 14px; }
+.checks label { display: flex; gap: 5px; align-items: center; }
+.ask { white-space: pre-wrap; font-size: 14px; background: var(--paper); border: 1px solid var(--rule); border-radius: 6px; padding: 10px 12px; margin: 12px 0 8px; }
+
+footer { color: var(--muted); font-size: 13px; padding: 40px 0 60px; }
+
+/* Signed-out / states */
+.gate { min-height: 70vh; display: grid; place-content: center; text-align: left; max-width: 520px; margin: 0 auto; padding: 0 20px; }
+.gate h1 { font: 700 56px/0.95 var(--display); margin: 0 0 12px; }
+.gate p { color: var(--muted); margin: 0 0 20px; }
+.hidden { display: none !important; }
+.toast {
+  position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+  background: var(--ink); color: var(--paper); padding: 8px 14px; border-radius: 6px; font-size: 14px;
+  opacity: 0; transition: opacity .2s; pointer-events: none;
+}
+.toast.show { opacity: 1; }
+@media (prefers-reduced-motion: reduce) { .toast { transition: none; } }
+
+@media (max-width: 720px) {
+  .market { grid-template-columns: 1fr; gap: 10px; padding: 22px 0; }
+  .rail { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+  .rail .facts { text-align: right; }
+}
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="wrap">
+    <div class="brand">Content Planner</div>
+    <div class="tools">
+      <span id="saveState" class="brand" aria-live="polite"></span>
+      <button class="btn quiet" id="themeBtn" type="button">Theme</button>
+      <button class="btn quiet hidden" id="reloadBtn" type="button">Reload data</button>
+      <button class="btn quiet hidden" id="signOutBtn" type="button">Sign out</button>
+    </div>
+  </div>
+</header>
+
+<section class="gate" id="gate">
+  <h1>Monday picks</h1>
+  <p id="gateMsg">Sign in with the Google account that runs the planner backend. This page reads the weekly plan from your Drive and saves your choices back to it.</p>
+  <div><button class="btn primary" id="signInBtn" type="button">Sign in with Google</button></div>
+</section>
+
+<main class="wrap hidden" id="app">
+  <section class="week">
+    <h1 id="weekTitle"></h1>
+    <p id="weekSub"></p>
+    <ul class="notices" id="notices"></ul>
+    <div class="bar">
+      <button class="btn primary" id="copyLines" type="button">Copy production lines</button>
+      <button class="btn" id="copyGbp" type="button">Copy GBP briefs</button>
+      <button class="btn" id="copyAskAll" type="button">Copy all field questions</button>
+    </div>
+  </section>
+
+  <div id="markets"></div>
+
+  <h2 class="section-title">Field team</h2>
+  <p class="section-note">Add each person you ask for field input and check the markets they cover. Their questions stay grouped so nobody gets more than their own markets.</p>
+  <div class="people" id="people"></div>
+  <div class="bar"><button class="btn" id="addPerson" type="button">Add person</button></div>
+  <div id="unassigned"></div>
+
+  <footer id="foot"></footer>
+</main>
+
+<div class="toast" id="toast" role="status"></div>
+
+<script>
+/* ================= SETTINGS ================= */
+const CLIENT_ID = '788046954081-1ojin1jscuit4vujd76qcinm3hjsgiq4.apps.googleusercontent.com';
+const SCOPES = 'https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/drive.file';
+const DATA_FILE = 'content-planner-data.json';
+const DECISIONS_FILE = 'content-planner-decisions.json';
+
+/* ================= STATE ================= */
+let token = null, tokenClient = null, pendingAuth = null;
+let plan = null;
+let decisions = { weeks: {}, team: [], promoted: {}, baselineDone: {} };
+let decisionsId = null;
+let saveTimer = null;
+
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+/* ================= THEME ================= */
+function applyTheme(t) {
+  if (t) document.documentElement.setAttribute('data-theme', t);
+  else document.documentElement.removeAttribute('data-theme');
+  $('themeBtn').textContent = t === 'dark' ? 'Dark' : t === 'light' ? 'Light' : 'Auto theme';
+}
+let theme = null;
+try { theme = localStorage.getItem('cp-theme'); } catch (e) {}
+applyTheme(theme);
+$('themeBtn').onclick = () => {
+  theme = theme === null ? 'light' : theme === 'light' ? 'dark' : null;
+  try { theme ? localStorage.setItem('cp-theme', theme) : localStorage.removeItem('cp-theme'); } catch (e) {}
+  applyTheme(theme);
+};
+
+/* ================= AUTH ================= */
+function initAuth() {
+  if (!window.google || !google.accounts || !google.accounts.oauth2) { setTimeout(initAuth, 200); return; }
+  tokenClient = google.accounts.oauth2.initTokenClient({
+    client_id: CLIENT_ID,
+    scope: SCOPES,
+    callback: (resp) => {
+      if (resp.error) { gate('Sign-in did not complete (' + resp.error + '). Try again.'); return; }
+      token = resp.access_token;
+      if (pendingAuth) { const p = pendingAuth; pendingAuth = null; p.resolve(); }
+      else start();
+    }
+  });
+}
+initAuth();
+
+$('signInBtn').onclick = () => tokenClient && tokenClient.requestAccessToken({ prompt: '' });
+$('signOutBtn').onclick = () => {
+  if (token) google.accounts.oauth2.revoke(token, () => {});
+  token = null; plan = null;
+  $('app').classList.add('hidden'); $('reloadBtn').classList.add('hidden'); $('signOutBtn').classList.add('hidden');
+  gate('Signed out.');
+};
+$('reloadBtn').onclick = () => start();
+
+function gate(msg) {
+  $('gate').classList.remove('hidden');
+  if (msg) $('gateMsg').textContent = msg;
+}
+
+function reauth() {
+  return new Promise((resolve, reject) => {
+    pendingAuth = { resolve, reject };
+    tokenClient.requestAccessToken({ prompt: '' });
+  });
+}
+
+async function api(url, opts = {}, retry = true) {
+  const res = await fetch(url, { ...opts, headers: { ...(opts.headers || {}), Authorization: 'Bearer ' + token } });
+  if (res.status === 401 && retry) { await reauth(); return api(url, opts, false); }
+  if (!res.ok) throw new Error('Drive returned ' + res.status + ' for ' + url.split('?')[0]);
+  return res;
+}
+
+async function findFile(name) {
+  const q = encodeURIComponent("name='" + name + "' and trashed=false");
+  const res = await api('https://www.googleapis.com/drive/v3/files?q=' + q + '&orderBy=modifiedTime desc&fields=files(id,modifiedTime)&pageSize=5');
+  const j = await res.json();
+  return (j.files || [])[0] || null;
+}
+
+async function readJson(id) {
+  const res = await api('https://www.googleapis.com/drive/v3/files/' + id + '?alt=media');
+  return res.json();
+}
+
+/* ================= LOAD ================= */
+async function start() {
+  $('gate').classList.add('hidden');
+  $('reloadBtn').classList.remove('hidden');
+  $('signOutBtn').classList.remove('hidden');
+  try {
+    const f = await findFile(DATA_FILE);
+    if (!f) {
+      $('app').classList.add('hidden');
+      gate('No plan found in your Drive. Run buildPlan in the Content Planner Backend Apps Script, then reload this page.');
+      $('signInBtn').textContent = 'Check again';
+      return;
+    }
+    plan = await readJson(f.id);
+    const d = await findFile(DECISIONS_FILE);
+    if (d) {
+      decisionsId = d.id;
+      try { decisions = await readJson(d.id); } catch (e) { decisions = { weeks: {}, team: [], promoted: {}, baselineDone: {} }; }
+    }
+    decisions.weeks = decisions.weeks || {};
+    decisions.team = decisions.team || [];
+    decisions.promoted = decisions.promoted || {};
+    decisions.baselineDone = decisions.baselineDone || {};
+    $('app').classList.remove('hidden');
+    render();
+  } catch (e) {
+    gate('Could not load the plan: ' + e.message + '. Reload, or sign out and back in.');
+  }
+}
+
+/* ================= DECISIONS ================= */
+function weekState() {
+  const w = plan.weekOf;
+  decisions.weeks[w] = decisions.weeks[w] || {};
+  return decisions.weeks[w];
+}
+function marketState(name) {
+  const ws = weekState();
+  ws[name] = ws[name] || { choice: 0, area: null, status: 'open' };
+  return ws[name];
+}
+function scheduleSave() {
+  $('saveState').textContent = 'Saving...';
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(saveDecisions, 800);
+}
+async function saveDecisions() {
+  // keep a year of weeks
+  const keys = Object.keys(decisions.weeks).sort();
+  while (keys.length > 52) delete decisions.weeks[keys.shift()];
+  const body = JSON.stringify(decisions, null, 2);
+  try {
+    if (decisionsId) {
+      await api('https://www.googleapis.com/upload/drive/v3/files/' + decisionsId + '?uploadType=media', {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body
+      });
+    } else {
+      const boundary = 'cpb' + Date.now();
+      const meta = JSON.stringify({ name: DECISIONS_FILE, mimeType: 'application/json' });
+      const multipart = '--' + boundary + '\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n' + meta +
+        '\r\n--' + boundary + '\r\nContent-Type: application/json\r\n\r\n' + body + '\r\n--' + boundary + '--';
+      const res = await api('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id', {
+        method: 'POST', headers: { 'Content-Type': 'multipart/related; boundary=' + boundary }, body: multipart
+      });
+      decisionsId = (await res.json()).id;
+    }
+    $('saveState').textContent = 'Saved';
+  } catch (e) {
+    $('saveState').textContent = 'Not saved: ' + e.message;
+  }
+}
+
+/* ================= DERIVED CONTENT ================= */
+function options(m) { return [m.pick, ...(m.alternates || [])].filter(Boolean); }
+
+function current(m) {
+  const st = marketState(m.market);
+  const opts = options(m);
+  const c = opts[st.choice] || opts[0];
+  if (!c) return null;
+  const area = st.area || c.area;
+  const words = c.words || c.pest.toLowerCase();
+  return {
+    ...c,
+    area,
+    productionLine: area + ' (' + m.market + ' market) ' + words + ' residential plog. Angle: ' + (c.angle || ''),
+    techQuestions: questions(c.questionType, area, words, c.pest),
+    status: st.status
+  };
+}
+
+function questions(type, area, w, pest) {
+  if (!type) type = pest === 'Termites' ? 'termite' : 'indoor';
+  if (type === 'outdoor') return [
+    'In ' + area + ', which yards have the worst ' + w + ' right now, and what do those yards have that others don\'t?',
+    'What\'s one thing homeowners in ' + area + ' do that makes ' + w + ' worse?'
+  ];
+  if (type === 'termite') return [
+    'On ' + area + ' jobs, where are you finding termite damage or swarmers first?',
+    'What do ' + area + ' homeowners usually mistake for termites, or miss completely?'
+  ];
+  return [
+    'In ' + area + ' homes, where are ' + w + ' actually getting in?',
+    'What do homeowners try before they call us about ' + w + ', and why doesn\'t it work?'
+  ];
+}
+
+function modeTag(c) {
+  if (c.status === 'locked') return '<span class="tag locked">Locked in</span>';
+  if (c.mode === 'due') return '<span class="tag due">Due this Monday</span>';
+  if (c.mode === 'late') return '<span class="tag late">Late, catch up</span>';
+  return '<span class="tag season">In season</span>';
+}
+
+function fmtDay(iso) {
+  if (!iso || !/^\d{4}-\d{2}-\d{2}$/.test(iso)) return iso || '';
+  const [y, mo, d] = iso.split('-').map(Number);
+  return new Date(y, mo - 1, d).toLocaleDateString(undefined, { month: 'long', day: 'numeric' });
+}
+
+/* ================= GBP ================= */
+function gbpPost1(m) {
+  if (!m.gbp) return null;
+  const wk = plan.weekOf;
+  return (m.gbp.post1Candidates || []).find(p => !decisions.promoted[p.url] || decisions.promoted[p.url] === wk) || null;
+}
+function gbpBrief1(m, p) {
+  return 'GBP post, ' + m.market + ': promote "' + p.title + '" (' + p.url + ').' +
+    (p.area ? ' Area: ' + p.area + '.' : '') + ' Photo tag: ' + p.photoTag;
+}
+function gbpBrief2(m, g) {
+  return 'GBP post, ' + m.market + ': ' + g.words + ' in ' + g.area + '.' +
+    (g.keyword ? ' Target keyword: ' + g.keyword + (g.solv != null ? ' (SoLV ' + g.solv + '%)' : '') + '.' : '') +
+    (g.angle ? ' Angle: ' + g.angle : '') + ' Photo tag: ' + g.photoTag;
+}
+function gbpBriefs(m) {
+  const out = [];
+  const p1 = gbpPost1(m);
+  if (p1) out.push(gbpBrief1(m, p1));
+  if (m.gbp && m.gbp.post2) out.push(gbpBrief2(m, m.gbp.post2));
+  return out;
+}
+
+function renderGbp(m) {
+  if (!m.gbp) return '';
+  const st = marketState(m.market);
+  let html = '<div class="gbp"><h3>GBP posts this week</h3>';
+
+  if (!decisions.baselineDone[m.market] && (m.gbp.recentPosts || []).length) {
+    html += '<div class="baseline" data-baseline><p>One-time setup: check the blogs that already have a GBP post, so the planner starts from the right place.</p>' +
+      m.gbp.recentPosts.map(p => '<label><input type="checkbox" value="' + esc(p.url) + '"' + (decisions.promoted[p.url] ? ' checked' : '') + '><span>' +
+        esc(p.title) + (p.date ? ' (' + esc(fmtDay(p.date)) + ')' : '') + '</span></label>').join('') +
+      '<button class="btn" type="button" data-act="baseline">Save and continue</button></div>';
+  }
+
+  const p1 = gbpPost1(m);
+  if (p1) {
+    const done = decisions.promoted[p1.url] === plan.weekOf;
+    html += '<div class="gpost' + (done ? ' done' : '') + '"><div class="gkind">Promote a blog</div><div>' +
+      '<p class="gtitle">' + esc(p1.title) + '</p>' +
+      '<p class="gsub">' + (p1.date ? 'Published ' + esc(fmtDay(p1.date)) + '. ' : 'Publish date not found. ') +
+        'Newest blog without a GBP post' + (p1.skippedOffSeason ? ', though its pest is out of season' : '') + '. ' +
+        '<a href="' + esc(p1.url) + '" target="_blank" rel="noopener">Open post</a></p>' +
+      '<span class="tagline">' + esc(p1.photoTag) + '</span>' +
+      '<div class="controls"><button class="btn" type="button" data-act="g1copy">Copy brief</button>' +
+      '<button class="btn" type="button" data-act="g1tag">Copy photo tag</button>' +
+      '<button class="btn" type="button" data-act="g1done" aria-pressed="' + done + '">' + (done ? 'Posted' : 'Mark posted') + '</button></div>' +
+      '</div></div>';
+  } else {
+    html += '<div class="gpost"><div class="gkind">Promote a blog</div><div><p class="gsub">Every blog in this market already has a GBP post. Use this slot for a second Falcon post or a photo update.</p></div></div>';
+  }
+
+  const g = m.gbp.post2;
+  if (g) {
+    const done = st.gbp2 === 'posted';
+    const tr = g.keyword && (m.gbp.tracking || []).find(t => t.keyword === g.keyword);
+    html += '<div class="gpost' + (done ? ' done' : '') + '"><div class="gkind">Falcon and season</div><div>' +
+      '<p class="gtitle">' + esc(g.pest === 'General pest' ? 'General pest control' : g.pest) + ' in ' + esc(g.area) + '</p>' +
+      '<p class="gsub">' + esc((g.why || []).join(' ')) + '</p>' +
+      (tr ? '<p class="track">Targeted since ' + esc(fmtDay(tr.firstWeek)) + ' (' + tr.times + ' week' + (tr.times === 1 ? '' : 's') + '): SoLV ' +
+        esc(tr.solvThen == null ? '?' : tr.solvThen) + '% then, ' + esc(tr.solvNow == null ? '?' : tr.solvNow) + '% now.</p>' : '') +
+      '<span class="tagline">' + esc(g.photoTag) + '</span>' +
+      '<div class="controls"><button class="btn" type="button" data-act="g2copy">Copy brief</button>' +
+      '<button class="btn" type="button" data-act="g2tag">Copy photo tag</button>' +
+      '<button class="btn" type="button" data-act="g2done" aria-pressed="' + done + '">' + (done ? 'Posted' : 'Mark posted') + '</button></div>' +
+      '</div></div>';
+  }
+
+  const others = (m.gbp.tracking || []).filter(t => !g || t.keyword !== g.keyword);
+  if (others.length) {
+    html += '<p class="track">Earlier Falcon targets: ' + others.map(t => esc(t.keyword) + ' ' +
+      esc(t.solvThen == null ? '?' : t.solvThen) + '% to ' + esc(t.solvNow == null ? '?' : t.solvNow) + '%').join(', ') + '.</p>';
+  }
+  return html + '</div>';
+}
+
+/* ================= RENDER ================= */
+function render() {
+  $('weekTitle').textContent = 'Week of ' + fmtDay(plan.weekOf);
+  const gen = new Date(plan.generatedAt);
+  $('weekSub').textContent = 'Plan built ' + gen.toLocaleString(undefined, { weekday: 'long', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) +
+    '. Lock the blog picks you are writing, swap anything that does not fit, send the field questions, and mark GBP posts as they go up.';
+  $('notices').innerHTML = (plan.warnings || []).map(w => '<li>' + esc(w) + '</li>').join('');
+
+  $('markets').innerHTML = plan.markets.map(renderMarket).join('');
+  bindMarkets();
+  renderTeam();
+
+  const fc = plan.falconCheck;
+  $('foot').innerHTML = esc(plan.rule || '') +
+    (fc ? '. Local Falcon check: ' + fc.reportsChecked + ' scans recomputed, ' + fc.mismatches.length + ' mismatches.' : '.');
+}
+
+function renderMarket(m) {
+  if (m.error) {
+    return '<section class="market"><div class="rail"><h2>' + esc(m.market) + '</h2></div><div class="main"><p>' + esc(m.error) + '</p></div></section>';
+  }
+  const c = current(m);
+  const facts = [
+    m.postCount + (m.postCount === 1 ? ' post found' : ' posts found'),
+    m.crawlOk ? '' : '<span class="flag">Crawl needs a look</span>',
+    m.verified ? '' : '<span class="flag">Pest list unverified</span>'
+  ].filter(Boolean).join('<br>');
+  const rail = '<div class="rail"><h2>' + esc(m.market) + '</h2><div class="facts">' + facts + '</div></div>';
+
+  if (!c) {
+    return '<section class="market" data-market="' + esc(m.market) + '">' + rail + '<div class="main"><p class="pick">Nothing strong this week</p>' +
+      '<p class="meta">No pest is due, late, or in season without coverage. Skip this market or pick your own topic.</p>' + renderGbp(m) + '</div></section>';
+  }
+
+  const st = marketState(m.market);
+  const areaOpts = (m.areas && m.areas.length ? m.areas : [c.area]);
+  if (areaOpts.indexOf(c.area) < 0) areaOpts.push(c.area);
+  const alts = options(m).map((o, i) => i === st.choice ? '' :
+    '<button class="btn" type="button" data-act="choose" data-i="' + i + '">Use ' + esc(o.pest) + ' instead</button>').join('');
+
+  const sisters = (c.sisterPosts || []).length
+    ? '<ul>' + c.sisterPosts.map(u => '<li><a href="' + esc(u) + '" target="_blank" rel="noopener">' + esc(u.replace(/^https?:\/\/(www\.)?mosquitosquad\.com/, '')) + '</a></li>').join('') + '</ul>'
+    : '<p>None found. Nothing on the blog covers this pest or area yet.</p>';
+
+  const kw = m.falcon && m.falcon.keywords && m.falcon.keywords.length
+    ? '<table class="kw"><thead><tr><th>Keyword</th><th>SoLV</th><th>Last move</th><th>Last scan</th></tr></thead><tbody>' +
+      m.falcon.keywords.map(k => '<tr><td>' + esc(k.keyword) + '</td><td>' + (k.solv == null ? '' : esc(k.solv) + '%') +
+        '</td><td class="' + (k.solvMove < 0 ? 'down' : '') + '">' + (k.solvMove == null ? '' : esc(k.solvMove)) +
+        '</td><td>' + esc(k.lastDate || '') + '</td></tr>').join('') + '</tbody></table>'
+    : '<p>No Local Falcon data for this market.</p>';
+
+  return '<section class="market' + (st.status === 'skipped' ? ' skipped' : '') + '" data-market="' + esc(m.market) + '">' + rail +
+    '<div class="main">' +
+      '<p class="pick">' + esc(c.pest) + ' in ' + esc(c.area) + '</p>' +
+      '<div class="meta">' + modeTag(c) +
+        (c.liveBy && c.liveBy !== 'in season now' ? '<span>Live by ' + esc(fmtDay(c.liveBy)) + '</span>' : '') +
+        (st.status === 'skipped' ? '<span>Skipped this week</span>' : '') +
+      '</div>' +
+      '<ul class="why">' + (c.why || []).map(x => '<li>' + esc(x) + '</li>').join('') + '</ul>' +
+      (c.caution ? '<p class="caution">' + esc(c.caution) + '</p>' : '') +
+      '<p class="line">' + esc(c.productionLine) + '</p>' +
+      '<div class="controls">' +
+        '<button class="btn" type="button" data-act="copyLine">Copy line</button>' +
+        '<button class="btn" type="button" data-act="copyAsk">Copy questions</button>' +
+        '<label>Area <select data-act="area">' + areaOpts.map(a => '<option' + (a === c.area ? ' selected' : '') + '>' + esc(a) + '</option>').join('') + '</select></label>' +
+        '<button class="btn" type="button" data-act="lock" aria-pressed="' + (st.status === 'locked') + '">' + (st.status === 'locked' ? 'Locked in' : 'Lock in') + '</button>' +
+        '<button class="btn quiet" type="button" data-act="skip" aria-pressed="' + (st.status === 'skipped') + '">' + (st.status === 'skipped' ? 'Skipped' : 'Skip') + '</button>' +
+      '</div>' +
+      (alts ? '<div class="alts">Other options: ' + alts + '</div>' : '') +
+      '<details><summary>Angle, sister posts, and Falcon data</summary><div class="inner">' +
+        '<div><h4>Angle from the pest calendar</h4><p>' + esc(c.angle || 'No note on the sheet.') + '</p></div>' +
+        '<div><h4>Why this area</h4><p>' + esc(c.areaReason || '') + '</p></div>' +
+        '<div><h4>Sister posts to differentiate against</h4>' + sisters + '</div>' +
+        '<div><h4>Local Falcon</h4>' + kw + '</div>' +
+        '<div><h4>Blog index</h4><p><a href="' + esc(m.blogIndex) + '" target="_blank" rel="noopener">' + esc(m.blogIndex) + '</a></p></div>' +
+      '</div></details>' +
+      renderGbp(m) +
+    '</div></section>';
+}
+
+function bindMarkets() {
+  document.querySelectorAll('.market[data-market]').forEach(sec => {
+    const name = sec.getAttribute('data-market');
+    const m = plan.markets.find(x => x.market === name);
+    sec.addEventListener('click', (e) => {
+      const b = e.target.closest('button[data-act]');
+      if (!b) return;
+      const st = marketState(name);
+      const act = b.getAttribute('data-act');
+      if (act === 'g1copy') return copy(gbpBrief1(m, gbpPost1(m)), 'Brief copied');
+      if (act === 'g1tag') return copy(gbpPost1(m).photoTag, 'Photo tag copied');
+      if (act === 'g2copy') return copy(gbpBrief2(m, m.gbp.post2), 'Brief copied');
+      if (act === 'g2tag') return copy(m.gbp.post2.photoTag, 'Photo tag copied');
+      if (act === 'g1done') {
+        const p = gbpPost1(m);
+        if (decisions.promoted[p.url] === plan.weekOf) delete decisions.promoted[p.url];
+        else decisions.promoted[p.url] = plan.weekOf;
+        scheduleSave(); return rerender();
+      }
+      if (act === 'g2done') { st.gbp2 = st.gbp2 === 'posted' ? null : 'posted'; scheduleSave(); return rerender(); }
+      if (act === 'baseline') {
+        const box = sec.querySelector('[data-baseline]');
+        box.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+          if (cb.checked) decisions.promoted[cb.value] = decisions.promoted[cb.value] || 'baseline';
+          else if (decisions.promoted[cb.value] === 'baseline') delete decisions.promoted[cb.value];
+        });
+        decisions.baselineDone[name] = true;
+        scheduleSave(); return rerender();
+      }
+      if (act === 'copyLine') return copy(current(m).productionLine, 'Line copied');
+      if (act === 'copyAsk') return copy(askBlock(m), 'Questions copied');
+      if (act === 'choose') { st.choice = Number(b.getAttribute('data-i')); st.area = null; }
+      if (act === 'lock') st.status = st.status === 'locked' ? 'open' : 'locked';
+      if (act === 'skip') st.status = st.status === 'skipped' ? 'open' : 'skipped';
+      scheduleSave(); rerender();
+    });
+    const sel = sec.querySelector('select[data-act="area"]');
+    if (sel) sel.addEventListener('change', () => { marketState(name).area = sel.value; scheduleSave(); rerender(); });
+  });
+}
+
+function rerender() {
+  const y = window.scrollY;
+  render();
+  window.scrollTo(0, y);
+}
+
+/* ================= FIELD TEAM ================= */
+function activeMarkets() {
+  return plan.markets.filter(m => !m.error && current(m) && marketState(m.market).status !== 'skipped');
+}
+
+function askBlock(m) {
+  const c = current(m);
+  return m.market.toUpperCase() + ' (' + (c.words || c.pest.toLowerCase()) + ', ' + c.area + ')\n' +
+    c.techQuestions.map((q, i) => (i + 1) + '. ' + q).join('\n');
+}
+
+function askFor(marketNames, name) {
+  const list = activeMarkets().filter(m => marketNames.indexOf(m.market) >= 0);
+  if (!list.length) return '';
+  const hi = name ? 'Hey ' + name.split(' ')[0] + ', a couple quick questions for this week\'s posts. Short answers are perfect, photos welcome.\n\n'
+                  : 'Quick questions for this week\'s posts. Short answers are perfect, photos welcome.\n\n';
+  return hi + list.map(askBlock).join('\n\n');
+}
+
+function renderTeam() {
+  const names = plan.markets.map(m => m.market);
+  $('people').innerHTML = decisions.team.map((p, i) => {
+    const text = askFor(p.markets || [], p.name);
+    return '<div class="person" data-i="' + i + '">' +
+      '<div class="person-head"><input type="text" value="' + esc(p.name) + '" placeholder="Name" aria-label="Name" data-f="name">' +
+      '<button class="btn quiet" type="button" data-f="remove">Remove</button></div>' +
+      '<div class="checks">' + names.map(n => '<label><input type="checkbox" data-f="mk" value="' + esc(n) + '"' +
+        ((p.markets || []).indexOf(n) >= 0 ? ' checked' : '') + '>' + esc(n) + '</label>').join('') + '</div>' +
+      (text ? '<div class="ask">' + esc(text) + '</div><button class="btn" type="button" data-f="copy">Copy ' + esc(p.name ? p.name.split(' ')[0] + '\'s' : 'these') + ' questions</button>'
+            : '<p class="section-note" style="margin:12px 0 0">No active markets checked for this person this week.</p>') +
+      '</div>';
+  }).join('');
+
+  const covered = new Set(decisions.team.flatMap(p => p.markets || []));
+  const loose = activeMarkets().map(m => m.market).filter(n => !covered.has(n));
+  $('unassigned').innerHTML = loose.length
+    ? '<h3 style="margin:24px 0 6px">Nobody assigned</h3><p class="section-note">' + esc(loose.join(', ')) +
+      (loose.length === 1 ? ' has' : ' have') + ' no one to ask. Check a box above, or copy these and send them yourself.</p>' +
+      '<div class="ask">' + esc(askFor(loose, '')) + '</div><button class="btn" type="button" id="copyLoose">Copy these questions</button>'
+    : '';
+  const cl = $('copyLoose');
+  if (cl) cl.onclick = () => copy(askFor(loose, ''), 'Questions copied');
+
+  document.querySelectorAll('.person').forEach(el => {
+    const i = Number(el.getAttribute('data-i'));
+    const p = decisions.team[i];
+    el.querySelector('[data-f="name"]').addEventListener('change', (e) => { p.name = e.target.value.trim(); scheduleSave(); rerender(); });
+    el.querySelector('[data-f="remove"]').onclick = () => { decisions.team.splice(i, 1); scheduleSave(); rerender(); };
+    el.querySelectorAll('[data-f="mk"]').forEach(cb => cb.addEventListener('change', () => {
+      p.markets = Array.from(el.querySelectorAll('[data-f="mk"]:checked')).map(x => x.value);
+      scheduleSave(); rerender();
+    }));
+    const cp = el.querySelector('[data-f="copy"]');
+    if (cp) cp.onclick = () => copy(askFor(p.markets || [], p.name), 'Questions copied');
+  });
+}
+
+$('addPerson').onclick = () => { decisions.team.push({ name: '', markets: [] }); scheduleSave(); rerender(); };
+
+$('copyLines').onclick = () => {
+  const list = activeMarkets();
+  const locked = list.filter(m => marketState(m.market).status === 'locked');
+  const use = locked.length ? locked : list;
+  copy(use.map(m => current(m).productionLine).join('\n\n'), (locked.length ? 'Locked lines' : 'All lines') + ' copied');
+};
+$('copyGbp').onclick = () => {
+  const lines = plan.markets.filter(m => !m.error).flatMap(gbpBriefs);
+  copy(lines.join('\n\n'), 'GBP briefs copied');
+};
+$('copyAskAll').onclick = () => copy(askFor(activeMarkets().map(m => m.market), ''), 'Questions copied');
+
+/* ================= UTIL ================= */
+async function copy(text, msg) {
+  try { await navigator.clipboard.writeText(text); }
+  catch (e) {
+    const ta = document.createElement('textarea'); ta.value = text; document.body.appendChild(ta);
+    ta.select(); document.execCommand('copy'); ta.remove();
+  }
+  const t = $('toast'); t.textContent = msg; t.classList.add('show');
+  clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove('show'), 1600);
+}
+</script>
+</body>
+</html>
