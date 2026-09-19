@@ -145,6 +145,9 @@ details ul { margin: 0; padding-left: 18px; }
   border: 1px solid var(--rule); border-radius: 6px; background: var(--paper); padding: 8px 10px;
   font: 14px/1.45 var(--body); color: var(--ink);
 }
+.notes .qs { margin: 4px 0 10px; padding-left: 20px; font-size: 15px; }
+.notes .qs li { margin-bottom: 4px; }
+.notes .ans { margin: 14px 0 6px; font-size: 13px; font-weight: 600; color: var(--muted); }
 .notes .hint { font-size: 12px; color: var(--muted); margin: 6px 0 8px; }
 .notes .earlier { margin-top: 10px; font-size: 13px; }
 .notes .earlier pre { white-space: pre-wrap; font: 13px/1.45 var(--body); max-height: 160px; overflow: auto; background: var(--paper); border: 1px solid var(--rule); border-radius: 6px; padding: 8px 10px; margin: 6px 0 0; }
@@ -482,17 +485,23 @@ function earlierNotes(market) {
 function renderNotes(m, c) {
   const st = marketState(m.market);
   const text = st.fieldNotes || '';
-  const firstLine = text.trim().split('\n')[0] || '';
+  const t = text.trim();
   const earlier = earlierNotes(m.market);
+  const qs = c ? c.techQuestions : [];
   return '<details class="notes" data-notes' + (openNotes.has(m.market) ? ' open' : '') + '>' +
-    '<summary>Field notes' +
-      (text.trim() ? '<span class="count">' + text.trim().length.toLocaleString() + ' characters</span><span class="preview">' + esc(firstLine) + '</span>'
-                   : '<span class="count">Paste the tech\'s answers for ' + esc(c ? c.pest.toLowerCase() + ' in ' + c.area : 'this week') + '</span>') +
+    '<summary>Field questions' +
+      '<span class="count">' + (t ? t.length.toLocaleString() + ' characters of answers saved' : 'No answers yet') + '</span>' +
     '</summary><div class="body">' +
+      '<ol class="qs">' + qs.map(q => '<li>' + esc(q) + '</li>').join('') + '</ol>' +
+      '<div class="controls">' +
+        '<button class="btn" type="button" data-act="copyAsk">Copy questions</button>' +
+        '<button class="btn quiet" type="button" data-act="nextQ">Different questions (' + (((c && c.qset) || 0) + 1) + ' of 3)</button>' +
+      '</div>' +
+      '<h4 class="ans">Their answers</h4>' +
       '<textarea data-act="notes" placeholder="Paste your conversation with the tech here.">' + esc(text) + '</textarea>' +
       '<p class="hint">Saved to your Drive. Never used to pick topics. Scan for customer names or street addresses before it goes into a post.</p>' +
-      '<div class="controls"><button class="btn" type="button" data-act="copyLineNotes"' + (text.trim() ? '' : ' disabled') + '>Copy line + field notes</button></div>' +
-      (earlier.length ? '<details class="earlier"><summary>Earlier notes for ' + esc(m.market) + ' (' + earlier.length + ')</summary>' +
+      '<div class="controls"><button class="btn" type="button" data-act="copyLineNotes"' + (t ? '' : ' disabled') + '>Copy line + answers</button></div>' +
+      (earlier.length ? '<details class="earlier"><summary>Earlier answers for ' + esc(m.market) + ' (' + earlier.length + ')</summary>' +
         earlier.map(x => '<pre>' + esc('Week of ' + fmtDay(x.week) + '\n' + x.st.fieldNotes.trim()) + '</pre>').join('') + '</details>' : '') +
     '</div></details>';
 }
@@ -500,7 +509,7 @@ function renderNotes(m, c) {
 function lineWithNotes(m) {
   const c = current(m);
   const notes = (marketState(m.market).fieldNotes || '').trim();
-  return c.productionLine + (notes ? '\n\nField notes from the tech (' + c.area + '):\n' + notes : '');
+  return c.productionLine + (notes ? '\n\nField answers from the tech (' + c.area + '):\n' + notes : '');
 }
 
 /* ================= GBP ================= */
@@ -642,8 +651,7 @@ function renderMarket(m) {
       '<p class="line">' + esc(c.productionLine) + '</p>' +
       '<div class="controls">' +
         '<button class="btn" type="button" data-act="copyLine">Copy line</button>' +
-        '<button class="btn" type="button" data-act="copyAsk">Copy questions</button>' +
-        '<button class="btn quiet" type="button" data-act="nextQ" title="Swap in a different pair of questions">Different questions (' + (c.qset + 1) + ' of 3)</button>' +
+
         '<label>Area <select data-act="area">' + areaOpts.map(a => '<option' + (a === c.area ? ' selected' : '') + '>' + esc(a) + '</option>').join('') + '</select></label>' +
         '<button class="btn" type="button" data-act="lock" aria-pressed="' + (st.status === 'locked') + '">' + (st.status === 'locked' ? 'Locked in' : 'Lock in') + '</button>' +
         '<button class="btn quiet" type="button" data-act="skip" aria-pressed="' + (st.status === 'skipped') + '">' + (st.status === 'skipped' ? 'Skipped' : 'Skip') + '</button>' +
@@ -691,7 +699,7 @@ function bindMarkets() {
         scheduleSave(); return rerender();
       }
       if (act === 'nextQ') { st.qset = ((st.qset || 0) + 1) % 3; scheduleSave(); return rerender(); }
-      if (act === 'copyLineNotes') return copy(lineWithNotes(m), 'Line and notes copied');
+      if (act === 'copyLineNotes') return copy(lineWithNotes(m), 'Line and answers copied');
       if (act === 'copyLine') return copy(current(m).productionLine, 'Line copied');
       if (act === 'copyAsk') return copy(askBlock(m), 'Questions copied');
       if (act === 'choose') { st.choice = Number(b.getAttribute('data-i')); st.area = null; }
@@ -705,14 +713,12 @@ function bindMarkets() {
       const ta = notesBox.querySelector('textarea');
       const btn = notesBox.querySelector('[data-act="copyLineNotes"]');
       const count = notesBox.querySelector('summary .count');
-      const prev = notesBox.querySelector('summary .preview');
       ta.addEventListener('input', () => {
         const st = marketState(name);
         st.fieldNotes = ta.value;
         const t = ta.value.trim();
         btn.disabled = !t;
-        if (t && count) count.textContent = t.length.toLocaleString() + ' characters';
-        if (prev) prev.textContent = t.split('\n')[0] || '';
+        if (count) count.textContent = t ? t.length.toLocaleString() + ' characters of answers saved' : 'No answers yet';
         scheduleSave();   // saves in the background, no redraw, so typing never jumps
       });
       ta.addEventListener('blur', () => { const y = window.scrollY; rerender(); window.scrollTo(0, y); });
