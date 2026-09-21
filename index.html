@@ -145,6 +145,15 @@ details ul { margin: 0; padding-left: 18px; }
 .settings label.chk { display: flex; gap: 6px; align-items: center; font-size: 14px; white-space: nowrap; }
 @media (max-width: 720px) { .settings .srow { grid-template-columns: 1fr; } }
 
+/* Photo suggestions */
+.photo { display: flex; gap: 12px; align-items: flex-start; margin: 4px 0 10px; }
+.photo img { width: 112px; height: 84px; object-fit: cover; border-radius: 6px; border: 1px solid var(--rule); background: var(--panel); flex: none; }
+.photo .pmeta { font-size: 13px; color: var(--muted); line-height: 1.45; }
+.photo .pname { color: var(--ink); font-weight: 500; word-break: break-all; }
+.photo .far { color: var(--amber); }
+.photo .controls .btn { font-size: 13px; padding: 4px 9px; }
+.nophoto { font-size: 13px; color: var(--muted); margin: 0 0 8px; }
+
 /* Field notes */
 .notes { margin-top: 12px; max-width: 76ch; border: 1px solid var(--rule); border-radius: 6px; background: var(--panel); }
 .notes > summary { list-style: none; padding: 8px 12px; display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; color: var(--ink); }
@@ -277,6 +286,8 @@ const SCOPES = 'https://www.googleapis.com/auth/drive.readonly https://www.googl
 const DATA_FILE = 'content-planner-data.json';
 const DECISIONS_FILE = 'content-planner-decisions.json';
 const REBUILD_FILE = 'content-planner-rebuild.json';
+const USES_FILE = 'content-planner-photo-uses.json';
+let photoUses = { used: {} }, usesId = null;
 let rebuildCfg = null;
 
 /* ================= STATE ================= */
@@ -401,6 +412,11 @@ async function start() {
       decisionsId = d.id;
       try { decisions = await readJson(d.id); } catch (e) { decisions = { weeks: {}, team: [], promoted: {}, baselineDone: {} }; }
     }
+    try {
+      const uf = await findFile(USES_FILE);
+      if (uf) { usesId = uf.id; photoUses = await readJson(uf.id); }
+    } catch (e) { photoUses = { used: {} }; }
+    photoUses.used = photoUses.used || {};
     try {
       const rb = await findFile(REBUILD_FILE);
       rebuildCfg = rb ? await readJson(rb.id) : null;
@@ -628,8 +644,12 @@ function renderServiceMarket(m) {
                       : 'Photos only for now. Turn off "Photos only" in the settings below to get GBP posts here again.') + '</p>' +
       (m.photoTags || []).map((t, i) => '<div class="gpost"><div class="gkind">' + esc(t.service) + '</div><div>' +
         (t.why ? '<p class="gsub">' + esc(t.area ? t.area + '. ' : '') + esc(t.why) + '</p>' : '') +
-        '<span class="tagline">' + esc(t.photoTag) + '</span>' +
-        '<div class="controls"><button class="btn" type="button" data-act="ptag" data-i="' + i + '">Copy photo tag</button></div></div></div>').join('') +
+        renderPhoto(m, 't' + i) +
+        '<span class="tagline">' + esc((curPhoto(m, 't' + i) || t).photoTag) + '</span>' +
+        '<div class="controls"><button class="btn" type="button" data-act="ptag" data-i="' + i + '">Copy photo tag</button>' +
+        (curPhoto(m, 't' + i) ? '<button class="btn" type="button" data-act="pused" data-i="' + i + '" aria-pressed="' + !!photoUses.used[curPhoto(m, 't' + i).id] + '">' +
+          (photoUses.used[curPhoto(m, 't' + i).id] ? 'Used' : 'Mark photo used') + '</button>' : '') +
+        '</div></div></div>').join('') +
       '</div>';
   } else if (m.gbp && m.gbp.waiting) {
     main = '<p class="wait">Waiting on Google verification. No GBP posts are assigned and Falcon numbers are ignored until you check "Verified on Google" in the settings below.</p>';
@@ -674,6 +694,71 @@ function lineWithNotes(m) {
   return c.productionLine + (notes ? '\n\nField answers from the tech (' + c.area + '):\n' + notes : '');
 }
 
+/* ================= PHOTOS ================= */
+async function saveUses() {
+  const body = JSON.stringify(photoUses, null, 1);
+  try {
+    if (usesId) {
+      await api('https://www.googleapis.com/upload/drive/v3/files/' + usesId + '?uploadType=media', {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body
+      });
+    } else {
+      const boundary = 'cpu' + Date.now();
+      const meta = JSON.stringify({ name: USES_FILE, mimeType: 'application/json' });
+      const multipart = '--' + boundary + '\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n' + meta +
+        '\r\n--' + boundary + '\r\nContent-Type: application/json\r\n\r\n' + body + '\r\n--' + boundary + '--';
+      const res = await api('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id', {
+        method: 'POST', headers: { 'Content-Type': 'multipart/related; boundary=' + boundary }, body: multipart
+      });
+      usesId = (await res.json()).id;
+    }
+  } catch (e) { copyToast('Photo use not saved: ' + e.message); }
+}
+
+function markPhotoUse(ph, m, slot, on) {
+  if (!ph) return;
+  if (on) photoUses.used[ph.id] = { week: plan.weekOf, brand: m.brand || 'ms', market: m.market, slot: slot, name: ph.name };
+  else delete photoUses.used[ph.id];
+  saveUses();
+}
+
+function photoList(m, slot) {
+  if (typeof slot === 'number') return (m.gbp && (slot === 1 ? m.gbp.photos1 : m.gbp.photos2)) || [];
+  const i = Number(String(slot).slice(1));
+  return ((m.photoTags || [])[i] || {}).photos || [];
+}
+function curPhoto(m, slot) {
+  const L = photoList(m, slot);
+  if (!L.length) return null;
+  const st = marketState(mkey(m));
+  return L[(st['ph_' + slot] || 0) % L.length];
+}
+function whereText(ph, m) {
+  if (ph.takenNear && ph.takenNear === ph.targetArea) return 'Taken in ' + ph.takenNear;
+  if (ph.takenNear) return '<span class="far">Taken near ' + esc(ph.takenNear) + ', ' + ph.milesFromArea + ' mi from ' + esc(ph.targetArea) + '</span>';
+  return '<span class="far">Taken in the ' + esc(m.market) + ' area, ' + ph.milesFromArea + ' mi from ' + esc(ph.targetArea) + '. The tag leaves the neighborhood out.</span>';
+}
+function renderPhoto(m, slot) {
+  const L = photoList(m, slot);
+  const ph = curPhoto(m, slot);
+  if (!ph) return '<p class="nophoto">No unused ' + esc(BRAND_NAMES[m.brand || 'ms']) + ' photo near this market in the photo map.</p>';
+  const idx = (marketState(mkey(m))['ph_' + slot] || 0) % L.length;
+  return '<div class="photo">' +
+    (ph.thumb ? '<img src="' + esc(ph.thumb) + '" alt="">' : '') +
+    '<div><div class="pmeta"><span class="pname">' + esc(ph.name || ph.id) + '</span><br>' + whereText(ph, m) +
+      (ph.category ? ' · ' + esc(ph.category) : '') + (ph.date ? ' · added ' + esc(fmtDay(ph.date)) : '') + '</div>' +
+      '<div class="controls" style="margin-top:6px">' +
+        (L.length > 1 ? '<button class="btn quiet" type="button" data-act="nextPhoto" data-slot="' + slot + '">Different photo (' + (idx + 1) + ' of ' + L.length + ')</button>' : '') +
+        (ph.driveId ? '<a class="btn quiet" href="https://drive.google.com/file/d/' + esc(ph.driveId) + '/view" target="_blank" rel="noopener">Open in Drive</a>' : '') +
+      '</div></div></div>';
+}
+function photoLine(m, slot) {
+  const ph = curPhoto(m, slot);
+  if (!ph) return '';
+  const where = ph.takenNear ? 'taken near ' + ph.takenNear : 'taken in the ' + m.market + ' area';
+  return ' Photo: ' + (ph.name || ph.id) + ' (' + where + ').';
+}
+
 /* ================= GBP ================= */
 function gbpPost1(m) {
   if (!m.gbp) return null;
@@ -681,13 +766,14 @@ function gbpPost1(m) {
   return (m.gbp.post1Candidates || []).find(p => !decisions.promoted[p.url] || decisions.promoted[p.url] === wk) || null;
 }
 function gbpBrief1(m, p) {
+  const ph = curPhoto(m, 1);
   return 'GBP post, ' + BRAND_NAMES[m.brand || 'ms'] + ' ' + m.market + ': promote "' + p.title + '" (' + p.url + ').' +
-    (p.area ? ' Area: ' + p.area + '.' : '') + ' Photo tag: ' + p.photoTag;
+    (p.area ? ' Area: ' + p.area + '.' : '') + photoLine(m, 1) + ' Photo tag: ' + (ph ? ph.photoTag : p.photoTag);
 }
 function gbpBrief2(m, g) {
   return 'GBP post, ' + BRAND_NAMES[m.brand || 'ms'] + ' ' + m.market + ': ' + g.words + ' in ' + g.area + '.' +
     (g.keyword ? ' Target keyword: ' + g.keyword + (g.solv != null ? ' (SoLV ' + g.solv + '%)' : '') + '.' : '') +
-    (g.angle ? ' Angle: ' + g.angle : '') + ' Photo tag: ' + g.photoTag;
+    (g.angle ? ' Angle: ' + g.angle : '') + photoLine(m, 2) + ' Photo tag: ' + ((curPhoto(m, 2) || g).photoTag);
 }
 function gbpBriefs(m) {
   if (!m.gbp || m.gbp.waiting) return [];
@@ -720,7 +806,8 @@ function renderGbp(m, solo) {
       '<p class="gsub">' + (p1.date ? 'Published ' + esc(fmtDay(p1.date)) + '. ' : 'Publish date not found. ') +
         'Newest blog without a GBP post' + (p1.skippedOffSeason ? ', though its pest is out of season' : '') + '. ' +
         '<a href="' + esc(p1.url) + '" target="_blank" rel="noopener">Open post</a></p>' +
-      '<span class="tagline">' + esc(p1.photoTag) + '</span>' +
+      renderPhoto(m, 1) +
+      '<span class="tagline">' + esc((curPhoto(m, 1) || p1).photoTag) + '</span>' +
       '<div class="controls"><button class="btn" type="button" data-act="g1copy">Copy brief</button>' +
       '<button class="btn" type="button" data-act="g1tag">Copy photo tag</button>' +
       '<button class="btn" type="button" data-act="g1done" aria-pressed="' + done + '">' + (done ? 'Posted' : 'Mark posted') + '</button></div>' +
@@ -740,7 +827,8 @@ function renderGbp(m, solo) {
       '<p class="gsub">' + esc((g.why || []).join(' ')) + '</p>' +
       (tr ? '<p class="track">Targeted since ' + esc(fmtDay(tr.firstWeek)) + ' (' + tr.times + ' week' + (tr.times === 1 ? '' : 's') + '): SoLV ' +
         esc(tr.solvThen == null ? '?' : tr.solvThen) + '% then, ' + esc(tr.solvNow == null ? '?' : tr.solvNow) + '% now.</p>' : '') +
-      '<span class="tagline">' + esc(g.photoTag) + '</span>' +
+      renderPhoto(m, 2) +
+      '<span class="tagline">' + esc((curPhoto(m, 2) || g).photoTag) + '</span>' +
       '<div class="controls"><button class="btn" type="button" data-act="g2copy">Copy brief</button>' +
       '<button class="btn" type="button" data-act="g2tag">Copy photo tag</button>' +
       '<button class="btn" type="button" data-act="g2done" aria-pressed="' + done + '">' + (done ? 'Posted' : 'Mark posted') + '</button></div>' +
@@ -856,18 +944,32 @@ function bindMarkets() {
       if (!b) return;
       const st = marketState(name);
       const act = b.getAttribute('data-act');
-      if (act === 'ptag') return copy(m.photoTags[Number(b.getAttribute('data-i'))].photoTag, 'Photo tag copied');
-      if (act === 'g1copy') return copy(gbpBrief1(m, gbpPost1(m)), 'Brief copied');
-      if (act === 'g1tag') return copy(gbpPost1(m).photoTag, 'Photo tag copied');
-      if (act === 'g2copy') return copy(gbpBrief2(m, m.gbp.post2), 'Brief copied');
-      if (act === 'g2tag') return copy(m.gbp.post2.photoTag, 'Photo tag copied');
-      if (act === 'g1done') {
-        const p = gbpPost1(m);
-        if (decisions.promoted[p.url] === plan.weekOf) delete decisions.promoted[p.url];
-        else decisions.promoted[p.url] = plan.weekOf;
+      if (act === 'ptag') { const i = Number(b.getAttribute('data-i')); return copy((curPhoto(m, 't' + i) || m.photoTags[i]).photoTag, 'Photo tag copied'); }
+      if (act === 'nextPhoto') {
+        const slot = b.getAttribute('data-slot'); const sk = /^\d$/.test(slot) ? Number(slot) : slot;
+        st['ph_' + sk] = ((st['ph_' + sk] || 0) + 1) % Math.max(photoList(m, sk).length, 1);
         scheduleSave(); return rerender();
       }
-      if (act === 'g2done') { st.gbp2 = st.gbp2 === 'posted' ? null : 'posted'; scheduleSave(); return rerender(); }
+      if (act === 'pused') {
+        const i = Number(b.getAttribute('data-i')); const ph = curPhoto(m, 't' + i);
+        markPhotoUse(ph, m, 't' + i, !photoUses.used[ph.id]); return rerender();
+      }
+      if (act === 'g1copy') return copy(gbpBrief1(m, gbpPost1(m)), 'Brief copied');
+      if (act === 'g1tag') return copy((curPhoto(m, 1) || gbpPost1(m)).photoTag, 'Photo tag copied');
+      if (act === 'g2copy') return copy(gbpBrief2(m, m.gbp.post2), 'Brief copied');
+      if (act === 'g2tag') return copy((curPhoto(m, 2) || m.gbp.post2).photoTag, 'Photo tag copied');
+      if (act === 'g1done') {
+        const p = gbpPost1(m);
+        const on = decisions.promoted[p.url] !== plan.weekOf;
+        if (on) decisions.promoted[p.url] = plan.weekOf; else delete decisions.promoted[p.url];
+        markPhotoUse(curPhoto(m, 1), m, 1, on);
+        scheduleSave(); return rerender();
+      }
+      if (act === 'g2done') {
+        st.gbp2 = st.gbp2 === 'posted' ? null : 'posted';
+        markPhotoUse(curPhoto(m, 2), m, 2, st.gbp2 === 'posted');
+        scheduleSave(); return rerender();
+      }
       if (act === 'baseline') {
         const box = sec.querySelector('[data-baseline]');
         box.querySelectorAll('input[type="checkbox"]').forEach(cb => {
