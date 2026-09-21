@@ -138,7 +138,7 @@ details ul { margin: 0; padding-left: 18px; }
 .brands button[aria-selected="true"] { background: var(--pine); color: var(--paper); }
 .market .gbp.solo { margin-top: 0; padding-top: 0; border-top: 0; }
 .wait { background: var(--slate-soft); border-radius: 8px; padding: 12px 14px; font-size: 15px; max-width: 72ch; }
-.settings { margin-top: 36px; }
+.settings { margin-top: 36px; max-width: none; }
 .settings .srow { display: grid; grid-template-columns: 160px 1fr auto; gap: 10px 14px; align-items: center; padding: 8px 0; border-top: 1px solid var(--rule); }
 .settings .srow:first-of-type { border-top: 0; }
 .settings input[type="text"] { width: 100%; border: 1px solid var(--rule); background: var(--paper); border-radius: 6px; padding: 6px 10px; font-size: 14px; }
@@ -523,7 +523,8 @@ function settingsFor(b, market) {
   const s = decisions.settings || {};
   return {
     areas: s.areas && s.areas[b] && s.areas[b][market],
-    unverified: !!(s.unverified && s.unverified[b] && s.unverified[b][market])
+    unverified: !!(s.unverified && s.unverified[b] && s.unverified[b][market]),
+    photosOnly: !!(s.photosOnly && s.photosOnly[b] && s.photosOnly[b][market])
   };
 }
 
@@ -537,16 +538,28 @@ function renderSettings() {
       const areas = (cur.areas && cur.areas.length ? cur.areas : (m.areas || [])).join(', ');
       return '<div class="srow" data-m="' + esc(m.market) + '"><strong>' + esc(m.market) + '</strong>' +
         '<input type="text" value="' + esc(areas) + '" aria-label="Areas for ' + esc(m.market) + '" placeholder="Comma-separated areas">' +
-        '<label class="chk"><input type="checkbox"' + (cur.unverified ? '' : ' checked') + '> Verified on Google</label></div>';
+        '<span style="display:flex;gap:14px;flex-wrap:wrap">' +
+        (brand !== 'ms' ? '<label class="chk"><input type="checkbox" data-f="photos"' + (cur.photosOnly || m.photosForced ? ' checked' : '') +
+          (m.photosForced ? ' disabled title="Posting here is handled by corporate"' : '') + '> Photos only</label>' : '') +
+        '<label class="chk"><input type="checkbox" data-f="verified"' + (cur.unverified ? '' : ' checked') + '> Verified on Google</label></span></div>';
     }).join('') +
-    '<div class="controls" style="margin-top:12px"><button class="btn primary" type="button" id="saveSettings">Save settings</button></div>' +
+    '<div class="controls" style="margin-top:12px"><button class="btn primary" type="button" id="saveSettings">Save settings</button>' +
+      (brand !== 'ms' ? '<button class="btn" type="button" id="allPhotos">Photos only for every market</button>' : '') + '</div>' +
+    (brand !== 'ms' ? '<p class="hint">"Photos only" swaps that market\'s two GBP posts for two photo tags a week, picked from in-season services with the weakest Falcon keywords.</p>' : '') +
     '<p class="hint">Areas are comma-separated. Unchecking "Verified on Google" pauses GBP picks for that market and keeps its Falcon numbers out of the scoring until you check it again.</p>' +
     '</div></details>';
+  const allBtn = $('allPhotos');
+  if (allBtn) allBtn.onclick = () => {
+    const boxes = Array.from(document.querySelectorAll('#settingsBox input[data-f="photos"]:not(:disabled)'));
+    const turnOn = boxes.some(b => !b.checked);
+    boxes.forEach(b => { b.checked = turnOn; });
+    allBtn.textContent = turnOn ? 'GBP posts for every market' : 'Photos only for every market';
+  };
   $('saveSettings').onclick = () => {
     decisions.settings = decisions.settings || {};
     const s = decisions.settings;
-    s.areas = s.areas || {}; s.unverified = s.unverified || {};
-    s.areas[brand] = s.areas[brand] || {}; s.unverified[brand] = s.unverified[brand] || {};
+    s.areas = s.areas || {}; s.unverified = s.unverified || {}; s.photosOnly = s.photosOnly || {};
+    s.areas[brand] = s.areas[brand] || {}; s.unverified[brand] = s.unverified[brand] || {}; s.photosOnly[brand] = s.photosOnly[brand] || {};
     document.querySelectorAll('#settingsBox .srow').forEach(row => {
       const name = row.getAttribute('data-m');
       const vals = row.querySelector('input[type="text"]').value.split(',').map(x => x.trim()).filter(Boolean);
@@ -556,8 +569,10 @@ function renderSettings() {
       // only store real edits, so untouched markets keep following their defaults (and NAL's live menu)
       if (vals.length && changed) s.areas[brand][name] = vals;
       else if (!vals.length) delete s.areas[brand][name];
-      if (row.querySelector('input[type="checkbox"]').checked) delete s.unverified[brand][name];
+      if (row.querySelector('input[data-f="verified"]').checked) delete s.unverified[brand][name];
       else s.unverified[brand][name] = true;
+      const ph = row.querySelector('input[data-f="photos"]');
+      if (ph && !ph.disabled) { if (ph.checked) s.photosOnly[brand][name] = true; else delete s.photosOnly[brand][name]; }
     });
     scheduleSave();
     copyToast('Settings saved. They apply on the next plan run.');
@@ -579,8 +594,11 @@ function renderServiceMarket(m) {
   let main;
   if (m.error) main = '<p>' + esc(m.error) + '</p>';
   else if (m.photosOnly) {
-    main = '<div class="gbp solo"><h3>Photo tags this week</h3><p class="gsub">GBP posting here is handled by a corporate manager. Photo tagging only.</p>' +
+    main = '<div class="gbp solo"><h3>Photo tags this week</h3><p class="gsub">' +
+      (m.photosForced ? 'GBP posting here is handled by a corporate manager. Photo tagging only.'
+                      : 'Photos only for now. Turn off "Photos only" in the settings below to get GBP posts here again.') + '</p>' +
       (m.photoTags || []).map((t, i) => '<div class="gpost"><div class="gkind">' + esc(t.service) + '</div><div>' +
+        (t.why ? '<p class="gsub">' + esc(t.area ? t.area + '. ' : '') + esc(t.why) + '</p>' : '') +
         '<span class="tagline">' + esc(t.photoTag) + '</span>' +
         '<div class="controls"><button class="btn" type="button" data-act="ptag" data-i="' + i + '">Copy photo tag</button></div></div></div>').join('') +
       '</div>';
@@ -932,8 +950,10 @@ $('copyLines').onclick = () => {
   copy(use.map(m => current(m).productionLine).join('\n\n'), (locked.length ? 'Locked lines' : 'All lines') + ' copied');
 };
 $('copyGbp').onclick = () => {
-  const lines = brandMarkets().filter(m => !m.error).flatMap(gbpBriefs);
-  copy(lines.join('\n\n'), 'GBP briefs copied');
+  const lines = brandMarkets().filter(m => !m.error).flatMap(m => m.photosOnly
+    ? (m.photoTags || []).map(t => 'Photo tag, ' + BRAND_NAMES[m.brand || 'ms'] + ' ' + m.market + ': ' + t.photoTag)
+    : gbpBriefs(m));
+  copy(lines.join('\n\n'), 'Briefs and photo tags copied');
 };
 $('copyAskAll').onclick = () => copy(askFor(activeMarkets().map(m => m.market), ''), 'Questions copied');
 
