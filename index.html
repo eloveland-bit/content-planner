@@ -524,7 +524,7 @@ function settingsFor(b, market) {
   return {
     areas: s.areas && s.areas[b] && s.areas[b][market],
     unverified: !!(s.unverified && s.unverified[b] && s.unverified[b][market]),
-    photosOnly: !!(s.photosOnly && s.photosOnly[b] && s.photosOnly[b][market])
+    photosOnly: (s.photosOnly && s.photosOnly[b] && market in s.photosOnly[b]) ? !!s.photosOnly[b][market] : undefined
   };
 }
 
@@ -539,8 +539,8 @@ function renderSettings() {
       return '<div class="srow" data-m="' + esc(m.market) + '"><strong>' + esc(m.market) + '</strong>' +
         '<input type="text" value="' + esc(areas) + '" aria-label="Areas for ' + esc(m.market) + '" placeholder="Comma-separated areas">' +
         '<span style="display:flex;gap:14px;flex-wrap:wrap">' +
-        (brand !== 'ms' ? '<label class="chk"><input type="checkbox" data-f="photos"' + (cur.photosOnly || m.photosForced ? ' checked' : '') +
-          (m.photosForced ? ' disabled title="Posting here is handled by corporate"' : '') + '> Photos only</label>' : '') +
+        (brand !== 'ms' ? '<label class="chk"><input type="checkbox" data-f="photos"' +
+          ((cur.photosOnly === undefined ? m.photosDefault : cur.photosOnly) ? ' checked' : '') + '> Photos only</label>' : '') +
         '<label class="chk"><input type="checkbox" data-f="verified"' + (cur.unverified ? '' : ' checked') + '> Verified on Google</label></span></div>';
     }).join('') +
     '<div class="controls" style="margin-top:12px"><button class="btn primary" type="button" id="saveSettings">Save settings</button>' +
@@ -550,7 +550,7 @@ function renderSettings() {
     '</div></details>';
   const allBtn = $('allPhotos');
   if (allBtn) allBtn.onclick = () => {
-    const boxes = Array.from(document.querySelectorAll('#settingsBox input[data-f="photos"]:not(:disabled)'));
+    const boxes = Array.from(document.querySelectorAll('#settingsBox input[data-f="photos"]'));
     const turnOn = boxes.some(b => !b.checked);
     boxes.forEach(b => { b.checked = turnOn; });
     allBtn.textContent = turnOn ? 'GBP posts for every market' : 'Photos only for every market';
@@ -572,7 +572,7 @@ function renderSettings() {
       if (row.querySelector('input[data-f="verified"]').checked) delete s.unverified[brand][name];
       else s.unverified[brand][name] = true;
       const ph = row.querySelector('input[data-f="photos"]');
-      if (ph && !ph.disabled) { if (ph.checked) s.photosOnly[brand][name] = true; else delete s.photosOnly[brand][name]; }
+      if (ph) s.photosOnly[brand][name] = ph.checked;   // stored either way, so a market's default can be overridden
     });
     scheduleSave();
     copyToast('Settings saved. They apply on the next plan run.');
@@ -595,7 +595,7 @@ function renderServiceMarket(m) {
   if (m.error) main = '<p>' + esc(m.error) + '</p>';
   else if (m.photosOnly) {
     main = '<div class="gbp solo"><h3>Photo tags this week</h3><p class="gsub">' +
-      (m.photosForced ? 'GBP posting here is handled by a corporate manager. Photo tagging only.'
+      (m.photosDefault ? 'GBP posting here is usually handled by a corporate manager, so this market defaults to photo tags. Turn off "Photos only" in the settings below if you take posting over.'
                       : 'Photos only for now. Turn off "Photos only" in the settings below to get GBP posts here again.') + '</p>' +
       (m.photoTags || []).map((t, i) => '<div class="gpost"><div class="gkind">' + esc(t.service) + '</div><div>' +
         (t.why ? '<p class="gsub">' + esc(t.area ? t.area + '. ' : '') + esc(t.why) + '</p>' : '') +
