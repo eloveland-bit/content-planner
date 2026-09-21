@@ -223,6 +223,7 @@ footer { color: var(--muted); font-size: 13px; padding: 40px 0 60px; }
     <div class="tools">
       <span id="saveState" class="brand" aria-live="polite"></span>
       <button class="btn quiet" id="themeBtn" type="button">Theme</button>
+      <button class="btn primary hidden" id="rebuildBtn" type="button">Rebuild now</button>
       <button class="btn quiet hidden" id="reloadBtn" type="button">Reload data</button>
       <button class="btn quiet hidden" id="signOutBtn" type="button">Sign out</button>
     </div>
@@ -275,6 +276,8 @@ const CLIENT_ID = '788046954081-1ojin1jscuit4vujd76qcinm3hjsgiq4.apps.googleuser
 const SCOPES = 'https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/drive.file';
 const DATA_FILE = 'content-planner-data.json';
 const DECISIONS_FILE = 'content-planner-decisions.json';
+const REBUILD_FILE = 'content-planner-rebuild.json';
+let rebuildCfg = null;
 
 /* ================= STATE ================= */
 let token = null, tokenClient = null, pendingAuth = null;
@@ -326,6 +329,27 @@ $('signOutBtn').onclick = () => {
   gate('Signed out.');
 };
 $('reloadBtn').onclick = () => start();
+$('rebuildBtn').onclick = () => rebuildNow();
+
+async function rebuildNow() {
+  if (!rebuildCfg) return;
+  const btn = $('rebuildBtn');
+  btn.disabled = true;
+  btn.textContent = 'Rebuilding, 1 to 3 minutes...';
+  try {
+    if (saveTimer) { clearTimeout(saveTimer); await saveDecisions(); }   // make sure the latest settings are in Drive first
+    const res = await fetch(rebuildCfg.url, { method: 'POST', body: JSON.stringify({ token: rebuildCfg.token }) });
+    const j = await res.json();
+    if (!j.ok) throw new Error(j.error || 'Rebuild failed');
+    await start();
+    copyToast('Plan rebuilt with your latest settings.');
+  } catch (e) {
+    copyToast('Rebuild did not finish: ' + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Rebuild now';
+  }
+}
 
 function gate(msg) {
   $('gate').classList.remove('hidden');
@@ -377,6 +401,11 @@ async function start() {
       decisionsId = d.id;
       try { decisions = await readJson(d.id); } catch (e) { decisions = { weeks: {}, team: [], promoted: {}, baselineDone: {} }; }
     }
+    try {
+      const rb = await findFile(REBUILD_FILE);
+      rebuildCfg = rb ? await readJson(rb.id) : null;
+    } catch (e) { rebuildCfg = null; }
+    $('rebuildBtn').classList.toggle('hidden', !(rebuildCfg && rebuildCfg.url && rebuildCfg.token));
     decisions.weeks = decisions.weeks || {};
     decisions.team = decisions.team || [];
     decisions.promoted = decisions.promoted || {};
@@ -575,7 +604,7 @@ function renderSettings() {
       if (ph) s.photosOnly[brand][name] = ph.checked;   // stored either way, so a market's default can be overridden
     });
     scheduleSave();
-    copyToast('Settings saved. They apply on the next plan run.');
+    copyToast(rebuildCfg ? 'Settings saved. Click Rebuild now at the top to apply them.' : 'Settings saved. They apply on the next plan run.');
   };
 }
 
