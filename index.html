@@ -818,6 +818,7 @@ function renderGbp(m, solo) {
       renderPhoto(m, 1) +
       '<span class="tagline">' + esc((curPhoto(m, 1) || p1).photoTag) + '</span>' +
       '<div class="controls"><button class="btn" type="button" data-act="g1copy">Copy brief</button>' +
+      '<button class="btn" type="button" data-act="g1link">Copy blog link</button>' +
       '<button class="btn" type="button" data-act="g1tag">Copy photo tag</button>' +
       '<button class="btn" type="button" data-act="g1done" aria-pressed="' + done + '">' + (done ? 'Posted' : 'Mark posted') + '</button></div>' +
       '</div></div>';
@@ -963,6 +964,7 @@ function bindMarkets() {
         const i = Number(b.getAttribute('data-i')); const ph = curPhoto(m, 't' + i);
         markPhotoUse(ph, m, 't' + i, !photoUses.used[ph.id]); return rerender();
       }
+      if (act === 'g1link') return copy(gbpPost1(m).url, 'Blog link copied');
       if (act === 'g1copy') return copy(gbpBrief1(m, gbpPost1(m)), 'Brief copied');
       if (act === 'g1tag') return copy((curPhoto(m, 1) || gbpPost1(m)).photoTag, 'Photo tag copied');
       if (act === 'g2copy') return copy(gbpBrief2(m, m.gbp.post2), 'Brief copied');
