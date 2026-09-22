@@ -153,6 +153,11 @@ details ul { margin: 0; padding-left: 18px; }
 .photo .far { color: var(--amber); }
 .photo .controls .btn { font-size: 13px; padding: 4px 9px; }
 .nophoto { font-size: 13px; color: var(--muted); margin: 0 0 8px; }
+.qual { font-size: 12px; font-weight: 600; padding: 1px 6px; border-radius: 4px; margin-right: 4px; }
+.q-strong { background: var(--pine-soft); color: var(--pine); }
+.q-ok { background: var(--slate-soft); color: var(--slate); }
+.q-weak { background: var(--amber-soft); color: var(--amber); }
+.pwhy { font-style: italic; }
 
 /* Field notes */
 .notes { margin-top: 12px; max-width: 76ch; border: 1px solid var(--rule); border-radius: 6px; background: var(--panel); }
@@ -745,8 +750,12 @@ function renderPhoto(m, slot) {
   const idx = (marketState(mkey(m))['ph_' + slot] || 0) % L.length;
   return '<div class="photo">' +
     (ph.thumb ? '<img src="' + esc(ph.thumb) + '" alt="">' : '') +
-    '<div><div class="pmeta"><span class="pname">' + esc(ph.name || ph.id) + '</span><br>' + whereText(ph, m) +
-      (ph.category ? ' · ' + esc(ph.category) : '') + (ph.date ? ' · added ' + esc(fmtDay(ph.date)) : '') + '</div>' +
+    '<div><div class="pmeta"><span class="qual q-' + esc(ph.quality || 'ok') + '">' +
+        ({ strong: 'Strong match', ok: 'Decent match', weak: 'Weak match, worth a look' }[ph.quality] || 'Match') + '</span> ' +
+        '<span class="pname">' + esc(ph.name || ph.id) + '</span><br>' +
+        (ph.desc ? '"' + esc(ph.desc) + '"<br>' : '') +
+        whereText(ph, m) + (ph.category ? ' · ' + esc(ph.category) : '') + (ph.date ? ' · added ' + esc(fmtDay(ph.date)) : '') +
+        (ph.why ? '<br><span class="pwhy">' + esc(ph.why.charAt(0).toUpperCase() + ph.why.slice(1)) + '.</span>' : '') + '</div>' +
       '<div class="controls" style="margin-top:6px">' +
         (L.length > 1 ? '<button class="btn quiet" type="button" data-act="nextPhoto" data-slot="' + slot + '">Different photo (' + (idx + 1) + ' of ' + L.length + ')</button>' : '') +
         (ph.driveId ? '<a class="btn quiet" href="https://drive.google.com/file/d/' + esc(ph.driveId) + '/view" target="_blank" rel="noopener">Open in Drive</a>' : '') +
