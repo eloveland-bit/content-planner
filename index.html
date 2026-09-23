@@ -139,7 +139,7 @@ details ul { margin: 0; padding-left: 18px; }
 .market .gbp.solo { margin-top: 0; padding-top: 0; border-top: 0; }
 .wait { background: var(--slate-soft); border-radius: 8px; padding: 12px 14px; font-size: 15px; max-width: 72ch; }
 .settings { margin-top: 36px; max-width: none; }
-.settings .srow { display: grid; grid-template-columns: 160px 1fr auto; gap: 10px 14px; align-items: center; padding: 8px 0; border-top: 1px solid var(--rule); }
+.settings .srow { display: grid; grid-template-columns: 150px 1.3fr 1fr auto; gap: 10px 14px; align-items: center; padding: 8px 0; border-top: 1px solid var(--rule); }
 .settings .srow:first-of-type { border-top: 0; }
 .settings input[type="text"] { width: 100%; border: 1px solid var(--rule); background: var(--paper); border-radius: 6px; padding: 6px 10px; font-size: 14px; }
 .settings label.chk { display: flex; gap: 6px; align-items: center; font-size: 14px; white-space: nowrap; }
@@ -569,6 +569,17 @@ document.querySelectorAll('#brandTabs button').forEach(b => {
   };
 });
 
+// Booking link for the "Book" button on the Falcon post: set per market in settings,
+// otherwise the market's home page for Mosquito Squad and New Age Lights
+function bookLink(m) {
+  const s = decisions.settings || {};
+  const b = m.brand || 'ms';
+  const set = s.bookLinks && s.bookLinks[b] && s.bookLinks[b][m.market];
+  if (set) return set;
+  if (b !== 'ls' && m.blogIndex) return m.blogIndex.replace(/\/blog\/?$/, '/');
+  return '';
+}
+
 function settingsFor(b, market) {
   const s = decisions.settings || {};
   return {
@@ -581,13 +592,14 @@ function settingsFor(b, market) {
 function renderSettings() {
   const list = brandMarkets().filter(m => m.market);
   if (!list.length) { $('settingsBox').innerHTML = ''; return; }
-  $('settingsBox').innerHTML = '<details class="notes settings"><summary>Areas and Google verification for ' + esc(BRAND_NAMES[brand]) +
+  $('settingsBox').innerHTML = '<details class="notes settings"><summary>Areas, booking links, and Google verification for ' + esc(BRAND_NAMES[brand]) +
     '<span class="count">Changes apply the next time the plan runs</span></summary><div class="body">' +
     list.map(m => {
       const cur = settingsFor(brand, m.market);
       const areas = (cur.areas && cur.areas.length ? cur.areas : (m.areas || [])).join(', ');
       return '<div class="srow" data-m="' + esc(m.market) + '"><strong>' + esc(m.market) + '</strong>' +
         '<input type="text" value="' + esc(areas) + '" aria-label="Areas for ' + esc(m.market) + '" placeholder="Comma-separated areas">' +
+        '<input type="text" data-f="book" value="' + esc(((decisions.settings || {}).bookLinks || {})[brand] && decisions.settings.bookLinks[brand][m.market] || '') + '" aria-label="Booking link for ' + esc(m.market) + '" placeholder="' + esc(bookLink(m) || 'Booking link (https://...)') + '">' +
         '<span style="display:flex;gap:14px;flex-wrap:wrap">' +
         (brand !== 'ms' ? '<label class="chk"><input type="checkbox" data-f="photos"' +
           ((cur.photosOnly === undefined ? m.photosDefault : cur.photosOnly) ? ' checked' : '') + '> Photos only</label>' : '') +
@@ -596,6 +608,7 @@ function renderSettings() {
     '<div class="controls" style="margin-top:12px"><button class="btn primary" type="button" id="saveSettings">Save settings</button>' +
       (brand !== 'ms' ? '<button class="btn" type="button" id="allPhotos">Photos only for every market</button>' : '') + '</div>' +
     (brand !== 'ms' ? '<p class="hint">"Photos only" swaps that market\'s two GBP posts for two photo tags a week, picked from in-season services with the weakest Falcon keywords.</p>' : '') +
+    '<p class="hint">Second box: the booking link for the Falcon post\'s "Book" button. Leave it empty to use the market\'s home page' + (brand === 'ls' ? ' (Lawn Squad has no market home page, so add one per market)' : '') + '.</p>' +
     '<p class="hint">Areas are comma-separated. Unchecking "Verified on Google" pauses GBP picks for that market and keeps its Falcon numbers out of the scoring until you check it again.</p>' +
     '</div></details>';
   const allBtn = $('allPhotos');
@@ -612,6 +625,9 @@ function renderSettings() {
     s.areas[brand] = s.areas[brand] || {}; s.unverified[brand] = s.unverified[brand] || {}; s.photosOnly[brand] = s.photosOnly[brand] || {};
     document.querySelectorAll('#settingsBox .srow').forEach(row => {
       const name = row.getAttribute('data-m');
+      s.bookLinks = s.bookLinks || {}; s.bookLinks[brand] = s.bookLinks[brand] || {};
+      const bk = row.querySelector('input[data-f="book"]').value.trim();
+      if (bk) s.bookLinks[brand][name] = bk; else delete s.bookLinks[brand][name];
       const vals = row.querySelector('input[type="text"]').value.split(',').map(x => x.trim()).filter(Boolean);
       const m = brandMarkets().find(x => x.market === name);
       const defaults = ((m && m.areas) || []).join('|').toLowerCase();
@@ -782,14 +798,15 @@ function gbpBrief1(m, p) {
 function gbpBrief2(m, g) {
   return 'GBP post, ' + BRAND_NAMES[m.brand || 'ms'] + ' ' + m.market + ': ' + g.words + ' in ' + g.area + '.' +
     (g.keyword ? ' Target keyword: ' + g.keyword + (g.solv != null ? ' (SoLV ' + g.solv + '%)' : '') + '.' : '') +
-    (g.angle ? ' Angle: ' + g.angle : '') + photoLine(m, 2) + ' Photo tag: ' + ((curPhoto(m, 2) || g).photoTag);
+    (g.angle ? ' Angle: ' + g.angle : '') + photoLine(m, 2) + ' Photo tag: ' + ((curPhoto(m, 2) || g).photoTag) +
+    (bookLink(m) ? ' Book link: ' + bookLink(m) : '');
 }
 function gbpBriefs(m) {
   if (!m.gbp || m.gbp.waiting) return [];
   const out = [];
   const p1 = gbpPost1(m);
-  if (p1) out.push(gbpBrief1(m, p1));
   if (m.gbp && m.gbp.post2) out.push(gbpBrief2(m, m.gbp.post2));
+  if (p1) out.push(gbpBrief1(m, p1));
   return out;
 }
 
@@ -807,10 +824,11 @@ function renderGbp(m, solo) {
       '<button class="btn" type="button" data-act="baseline">Save and continue</button></div>';
   }
 
+  let blogHtml = '', falconHtml = '';
   const p1 = gbpPost1(m);
   if (p1) {
     const done = decisions.promoted[p1.url] === plan.weekOf;
-    html += '<div class="gpost' + (done ? ' done' : '') + '"><div class="gkind">Promote a blog</div><div>' +
+    blogHtml += '<div class="gpost' + (done ? ' done' : '') + '"><div class="gkind">Promote a blog</div><div>' +
       '<p class="gtitle">' + esc(p1.title) + '</p>' +
       '<p class="gsub">' + (p1.date ? 'Published ' + esc(fmtDay(p1.date)) + '. ' : 'Publish date not found. ') +
         'Newest blog without a GBP post' + (p1.skippedOffSeason ? ', though its pest is out of season' : '') + '. ' +
@@ -823,7 +841,7 @@ function renderGbp(m, solo) {
       '<button class="btn" type="button" data-act="g1done" aria-pressed="' + done + '">' + (done ? 'Posted' : 'Mark posted') + '</button></div>' +
       '</div></div>';
   } else {
-    html += '<div class="gpost"><div class="gkind">Promote a blog</div><div><p class="gsub">' +
+    blogHtml += '<div class="gpost"><div class="gkind">Promote a blog</div><div><p class="gsub">' +
       (m.postCount ? 'Every local blog in this market already has a GBP post.' : 'No local blog posts found for this market yet.') +
       ' Use this slot for a second Falcon post or a photo update.</p></div></div>';
   }
@@ -832,19 +850,22 @@ function renderGbp(m, solo) {
   if (g) {
     const done = st.gbp2 === 'posted';
     const tr = g.keyword && (m.gbp.tracking || []).find(t => t.keyword === g.keyword);
-    html += '<div class="gpost' + (done ? ' done' : '') + '"><div class="gkind">Falcon and season</div><div>' +
+    falconHtml += '<div class="gpost' + (done ? ' done' : '') + '"><div class="gkind">Falcon and season</div><div>' +
       '<p class="gtitle">' + esc(g.pest === 'General pest' ? 'General pest control' : g.pest) + ' in ' + esc(g.area) + '</p>' +
       '<p class="gsub">' + esc((g.why || []).join(' ')) + '</p>' +
+      (g.angleOffSeason ? '<p class="caution">The calendar angle for this one is written for another season. Write it for right now.</p>' : '') +
       (tr ? '<p class="track">Targeted since ' + esc(fmtDay(tr.firstWeek)) + ' (' + tr.times + ' week' + (tr.times === 1 ? '' : 's') + '): SoLV ' +
         esc(tr.solvThen == null ? '?' : tr.solvThen) + '% then, ' + esc(tr.solvNow == null ? '?' : tr.solvNow) + '% now.</p>' : '') +
       renderPhoto(m, 2) +
       '<span class="tagline">' + esc((curPhoto(m, 2) || g).photoTag) + '</span>' +
       '<div class="controls"><button class="btn" type="button" data-act="g2copy">Copy brief</button>' +
+      '<button class="btn" type="button" data-act="g2book"' + (bookLink(m) ? '' : ' title="Add a booking link in the settings below"') + '>' + (bookLink(m) ? 'Copy book link' : 'Add book link in settings') + '</button>' +
       '<button class="btn" type="button" data-act="g2tag">Copy photo tag</button>' +
       '<button class="btn" type="button" data-act="g2done" aria-pressed="' + done + '">' + (done ? 'Posted' : 'Mark posted') + '</button></div>' +
       '</div></div>';
   }
 
+  html += falconHtml + blogHtml;   // Falcon post first, blog promotion second
   const others = (m.gbp.tracking || []).filter(t => !g || t.keyword !== g.keyword);
   if (others.length) {
     html += '<p class="track">Earlier Falcon targets: ' + others.map(t => esc(t.keyword) + ' ' +
@@ -934,7 +955,10 @@ function renderMarket(m) {
       (alts ? '<div class="alts">Other options: ' + alts + '</div>' : '') +
       renderNotes(m, c) +
       '<details><summary>Angle, sister posts, and Falcon data</summary><div class="inner">' +
-        '<div><h4>Angle from the pest calendar</h4><p>' + esc(c.angle || 'No note on the sheet.') + '</p></div>' +
+        '<div><h4>Angle from the pest calendar' + (c.liveMonth ? ', trimmed to ' + esc(c.liveMonth) : '') + '</h4><p>' +
+          esc(c.angle || 'No note on the sheet.') + '</p>' +
+          (c.angleOffSeason ? '<p class="caution">This row\'s angle is written for another season. Write it for ' + esc(c.liveMonth || 'the live date') + ' instead.</p>' : '') +
+          (c.angleDropped ? '<p class="track">Other-season notes left out: ' + esc(c.angleDropped) + '</p>' : '') + '</div>' +
         '<div><h4>Why this area</h4><p>' + esc(c.areaReason || '') + '</p></div>' +
         '<div><h4>Sister posts to differentiate against</h4>' + sisters + '</div>' +
         '<div><h4>Local Falcon</h4>' + kw + '</div>' +
@@ -963,6 +987,10 @@ function bindMarkets() {
       if (act === 'pused') {
         const i = Number(b.getAttribute('data-i')); const ph = curPhoto(m, 't' + i);
         markPhotoUse(ph, m, 't' + i, !photoUses.used[ph.id]); return rerender();
+      }
+      if (act === 'g2book') {
+        if (!bookLink(m)) { const d = document.querySelector('#settingsBox details'); if (d) { d.open = true; d.scrollIntoView({ behavior: 'smooth' }); } return; }
+        return copy(bookLink(m), 'Book link copied');
       }
       if (act === 'g1link') return copy(gbpPost1(m).url, 'Blog link copied');
       if (act === 'g1copy') return copy(gbpBrief1(m, gbpPost1(m)), 'Brief copied');
