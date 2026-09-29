@@ -919,8 +919,21 @@ function renderMarket(m) {
   }
 
   const st = marketState(m.market);
+  const areaInfo = {};
+  (c.areaOptions || []).forEach(a => { areaInfo[a.name] = a; });
   const areaOpts = (m.areas && m.areas.length ? m.areas : [c.area]);
   if (areaOpts.indexOf(c.area) < 0) areaOpts.push(c.area);
+  const areaLabel = (a) => {
+    const info = areaInfo[a];
+    if (!info) return a;
+    const bits = [];
+    if (info.samePest) bits.push(info.samePest + ' post' + (info.samePest === 1 ? '' : 's') + ' on this pest');
+    else bits.push('nothing on this pest');
+    if (info.usedRecently) bits.push('used in the last 4 weeks');
+    else if (!info.anyPosts) bits.push('no posts at all yet');
+    return a + ' (' + bits.join(', ') + ')';
+  };
+  const picked = areaInfo[c.area];
   const alts = options(m).map((o, i) => i === st.choice ? '' :
     '<button class="btn" type="button" data-act="choose" data-i="' + i + '">Use ' + esc(o.pest) + ' instead</button>').join('');
 
@@ -945,13 +958,16 @@ function renderMarket(m) {
       '</div>' +
       '<ul class="why">' + (c.why || []).map(x => '<li>' + esc(x) + '</li>').join('') + '</ul>' +
       (c.caution ? '<p class="caution">' + esc(c.caution) + '</p>' : '') +
-      (c.overlapWarning ? '<p class="caution">' + esc(c.overlapWarning) + '</p>' : '') +
+      (picked && picked.samePest
+        ? '<p class="caution">' + esc(c.area) + ' already has ' + picked.samePest + ' post' + (picked.samePest === 1 ? '' : 's') +
+          ' on this pest. Refresh instead of writing a second one' + (picked.samePestUrl ? ': ' + esc(picked.samePestUrl) : '') + '.</p>'
+        : (c.overlapWarning ? '<p class="caution">' + esc(c.overlapWarning) + '</p>' : '')) +
       (c.repeatVisit ? '<p class="caution">Second pass on this pest. Change the area and the question, or skip this market this week.</p>' : '') +
       '<p class="line">' + esc(c.productionLine) + '</p>' +
       '<div class="controls">' +
         '<button class="btn" type="button" data-act="copyLine">Copy line</button>' +
 
-        '<label>Area <select data-act="area">' + areaOpts.map(a => '<option' + (a === c.area ? ' selected' : '') + '>' + esc(a) + '</option>').join('') + '</select></label>' +
+        '<label>Area <select data-act="area">' + areaOpts.map(a => '<option value="' + esc(a) + '"' + (a === c.area ? ' selected' : '') + '>' + esc(areaLabel(a)) + '</option>').join('') + '</select></label>' +
         '<button class="btn" type="button" data-act="lock" aria-pressed="' + (st.status === 'locked') + '">' + (st.status === 'locked' ? 'Locked in' : 'Lock in') + '</button>' +
         '<button class="btn quiet" type="button" data-act="skip" aria-pressed="' + (st.status === 'skipped') + '">' + (st.status === 'skipped' ? 'Skipped' : 'Skip') + '</button>' +
       '</div>' +
