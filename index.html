@@ -941,9 +941,12 @@ function renderMarket(m) {
       '<div class="meta">' + modeTag(c) +
         (c.liveBy && c.liveBy !== 'in season now' ? '<span>Live by ' + esc(fmtDay(c.liveBy)) + '</span>' : '') +
         (st.status === 'skipped' ? '<span>Skipped this week</span>' : '') +
+        (st.wrote && st.status !== 'locked' ? '<span class="tag due">Marked written</span>' : '') +
       '</div>' +
       '<ul class="why">' + (c.why || []).map(x => '<li>' + esc(x) + '</li>').join('') + '</ul>' +
       (c.caution ? '<p class="caution">' + esc(c.caution) + '</p>' : '') +
+      (c.overlapWarning ? '<p class="caution">' + esc(c.overlapWarning) + '</p>' : '') +
+      (c.repeatVisit ? '<p class="caution">Second pass on this pest. Change the area and the question, or skip this market this week.</p>' : '') +
       '<p class="line">' + esc(c.productionLine) + '</p>' +
       '<div class="controls">' +
         '<button class="btn" type="button" data-act="copyLine">Copy line</button>' +
@@ -1020,11 +1023,23 @@ function bindMarkets() {
       }
       if (act === 'nextQ') { st.qset = ((st.qset || 0) + 1) % 3; scheduleSave(); return rerender(); }
       if (act === 'copyLineNotes') return copy(lineWithNotes(m), 'Line and answers copied');
-      if (act === 'copyLine') return copy(current(m).productionLine, 'Line copied');
+      if (act === 'copyLine') {
+        const c0 = current(m);
+        st.wrote = { pest: c0.pest, area: c0.area, at: new Date().toISOString() };   // keeps it off next week's list
+        scheduleSave();
+        copy(c0.productionLine, 'Line copied. This topic is off next week\'s list.');
+        return rerender();
+      }
       if (act === 'copyAsk') return copy(askBlock(m), 'Questions copied');
       if (act === 'choose') { st.choice = Number(b.getAttribute('data-i')); st.area = null; }
-      if (act === 'lock') st.status = st.status === 'locked' ? 'open' : 'locked';
-      if (act === 'skip') st.status = st.status === 'skipped' ? 'open' : 'skipped';
+      if (act === 'lock') {
+        st.status = st.status === 'locked' ? 'open' : 'locked';
+        if (st.status === 'locked') { const c0 = current(m); st.wrote = { pest: c0.pest, area: c0.area, at: new Date().toISOString() }; }
+      }
+      if (act === 'skip') {
+        st.status = st.status === 'skipped' ? 'open' : 'skipped';
+        if (st.status === 'skipped') delete st.wrote;   // not writing it, so it can come back
+      }
       scheduleSave(); rerender();
     });
     const notesBox = sec.querySelector('details[data-notes]');
