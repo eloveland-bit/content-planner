@@ -787,8 +787,11 @@ function photoLine(m, slot) {
 /* ================= GBP ================= */
 function gbpPost1(m) {
   if (!m.gbp) return null;
-  const wk = plan.weekOf;
-  return (m.gbp.post1Candidates || []).find(p => !decisions.promoted[p.url] || decisions.promoted[p.url] === wk) || null;
+  return (m.gbp.post1Candidates || []).find(p => !decisions.promoted[p.url]) || null;
+}
+function gbpDoneThisWeek(m) {
+  if (!m.gbp) return [];
+  return (m.gbp.post1Candidates || []).filter(p => decisions.promoted[p.url] === plan.weekOf);
 }
 function gbpBrief1(m, p) {
   const ph = curPhoto(m, 1);
@@ -825,10 +828,16 @@ function renderGbp(m, solo) {
   }
 
   let blogHtml = '', falconHtml = '';
+  gbpDoneThisWeek(m).forEach(dp => {
+    blogHtml += '<div class="gpost done"><div class="gkind">Done this week</div><div>' +
+      '<p class="gtitle">' + esc(dp.title) + '</p>' +
+      '<div class="controls"><button class="btn quiet" type="button" data-act="g1undo" data-url="' + esc(dp.url) + '">Undo, put it back</button></div>' +
+      '</div></div>';
+  });
   const p1 = gbpPost1(m);
   if (p1) {
-    const done = decisions.promoted[p1.url] === plan.weekOf;
-    blogHtml += '<div class="gpost' + (done ? ' done' : '') + '"><div class="gkind">Promote a blog</div><div>' +
+    const done = false;
+    blogHtml += '<div class="gpost"><div class="gkind">Promote a blog</div><div>' +
       '<p class="gtitle">' + esc(p1.title) + '</p>' +
       '<p class="gsub">' + (p1.date ? 'Published ' + esc(fmtDay(p1.date)) + '. ' : 'Publish date not found. ') +
         'Newest blog without a GBP post' + (p1.skippedOffSeason ? ', though its pest is out of season' : '') + '. ' +
@@ -1027,11 +1036,16 @@ function bindMarkets() {
       if (act === 'g1tag') return copy((curPhoto(m, 1) || gbpPost1(m)).photoTag, 'Photo tag copied');
       if (act === 'g2copy') return copy(gbpBrief2(m, m.gbp.post2), 'Brief copied');
       if (act === 'g2tag') return copy((curPhoto(m, 2) || m.gbp.post2).photoTag, 'Photo tag copied');
+      if (act === 'g1undo') {
+        const url = b.getAttribute('data-url');
+        delete decisions.promoted[url];
+        scheduleSave(); return rerender();
+      }
       if (act === 'g1done') {
         const p = gbpPost1(m);
-        const on = decisions.promoted[p.url] !== plan.weekOf;
-        if (on) decisions.promoted[p.url] = plan.weekOf; else delete decisions.promoted[p.url];
-        markPhotoUse(curPhoto(m, 1), m, 1, on);
+        if (!p) return;
+        decisions.promoted[p.url] = plan.weekOf;
+        markPhotoUse(curPhoto(m, 1), m, 1, true);
         scheduleSave(); return rerender();
       }
       if (act === 'g2done') {
