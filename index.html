@@ -1011,8 +1011,19 @@ function bindMarkets() {
         if (!bookLink(m)) { const d = document.querySelector('#settingsBox details'); if (d) { d.open = true; d.scrollIntoView({ behavior: 'smooth' }); } return; }
         return copy(bookLink(m), 'Book link copied');
       }
-      if (act === 'g1link') return copy(gbpPost1(m).url, 'Blog link copied');
-      if (act === 'g1copy') return copy(gbpBrief1(m, gbpPost1(m)), 'Brief copied');
+      if (act === 'g1link') {
+        const p = gbpPost1(m);
+        if (!decisions.promoted[p.url]) { decisions.promoted[p.url] = plan.weekOf; markPhotoUse(curPhoto(m, 1), m, 1, true); scheduleSave(); }
+        copy(p.url, 'Blog link copied. This post is off next week\'s list.');
+        return rerender();
+      }
+      if (act === 'g1copy') {
+        const p = gbpPost1(m);
+        const text = gbpBrief1(m, p);
+        if (!decisions.promoted[p.url]) { decisions.promoted[p.url] = plan.weekOf; markPhotoUse(curPhoto(m, 1), m, 1, true); scheduleSave(); }
+        copy(text, 'Brief copied. This blog is off next week\'s list.');
+        return rerender();
+      }
       if (act === 'g1tag') return copy((curPhoto(m, 1) || gbpPost1(m)).photoTag, 'Photo tag copied');
       if (act === 'g2copy') return copy(gbpBrief2(m, m.gbp.post2), 'Brief copied');
       if (act === 'g2tag') return copy((curPhoto(m, 2) || m.gbp.post2).photoTag, 'Photo tag copied');
