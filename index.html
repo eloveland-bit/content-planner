@@ -159,6 +159,20 @@ details ul { margin: 0; padding-left: 18px; }
 .q-weak { background: var(--amber-soft); color: var(--amber); }
 .pwhy { font-style: italic; }
 
+/* Audit */
+.audit .row { display: grid; grid-template-columns: 90px 150px 1fr; gap: 10px; padding: 8px 0; border-top: 1px solid var(--rule); font-size: 14px; align-items: start; }
+.audit .row:first-of-type { border-top: 0; }
+.audit .lv { font-size: 12px; font-weight: 600; padding: 1px 7px; border-radius: 4px; justify-self: start; }
+.lv-ok { background: var(--pine-soft); color: var(--pine); }
+.lv-warn { background: var(--amber-soft); color: var(--amber); }
+.lv-fail { background: var(--amber); color: var(--paper); }
+.audit .scope { color: var(--muted); font-weight: 500; }
+.audit .detail { color: var(--muted); }
+.drafts { margin-top: 18px; border-top: 1px solid var(--rule); padding-top: 14px; }
+.drafts .d { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; font-size: 14px; padding: 6px 0; }
+.drafts select, .drafts input { border: 1px solid var(--rule); background: var(--paper); border-radius: 6px; padding: 6px 8px; font-size: 14px; }
+.drafts .form { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 10px; }
+
 /* Field notes */
 .notes { margin-top: 12px; max-width: 76ch; border: 1px solid var(--rule); border-radius: 6px; background: var(--panel); }
 .notes > summary { list-style: none; padding: 8px 12px; display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; color: var(--ink); }
@@ -260,6 +274,7 @@ footer { color: var(--muted); font-size: 13px; padding: 40px 0 60px; }
       <button type="button" role="tab" data-brand="nal">New Age Lights</button>
     </div>
     <ul class="notices" id="notices"></ul>
+    <div id="auditBox"></div>
     <div class="bar">
       <button class="btn primary ms-only" id="copyLines" type="button">Copy production lines</button>
       <button class="btn" id="copyGbp" type="button">Copy GBP briefs</button>
@@ -302,6 +317,7 @@ let decisions = { weeks: {}, team: [], promoted: {}, baselineDone: {} };
 let decisionsId = null;
 let saveTimer = null;
 const openNotes = new Set();
+let auditOpen = false;
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -883,6 +899,82 @@ function renderGbp(m, solo) {
   return html + '</div>';
 }
 
+/* ================= AUDIT + DRAFTS ================= */
+function renderAudit() {
+  const a = plan.audit;
+  if (!a) { $('auditBox').innerHTML = ''; return; }
+  const badge = (lv) => '<span class="lv lv-' + lv + '">' + ({ ok: 'Pass', warn: 'Check', fail: 'Problem' }[lv] || lv) + '</span>';
+  const head = a.failures + ' problem' + (a.failures === 1 ? '' : 's') + ', ' + a.warnings + ' to check, ' + a.passed + ' passed';
+  const order = { fail: 0, warn: 1, ok: 2 };
+  const rows = (a.checks || []).slice().sort((x, y) => order[x.level] - order[y.level])
+    .map(c => '<div class="row">' + badge(c.level) + '<span class="scope">' + esc(c.scope) + '</span>' +
+      '<span><strong>' + esc(c.title) + '</strong><br><span class="detail">' + esc(c.detail) + '</span></span></div>').join('');
+  $('auditBox').innerHTML = '<details class="notes audit"' + (a.failures || auditOpen ? ' open' : '') + '><summary>Audit' +
+    '<span class="count">' + esc(head) + '</span></summary><div class="body">' + rows + renderDrafts() + '</div></details>';
+  const det = $('auditBox').querySelector('details');
+  if (det) det.addEventListener('toggle', () => { auditOpen = det.open; });
+  bindDrafts();
+}
+
+function liveNow(id) {
+  return ((plan.audit && plan.audit.publishedSinceLogged) || []).find(x => x.id === id);
+}
+
+function renderDrafts() {
+  const pending = (decisions.pending || []);
+  const msMarkets = plan.markets.filter(m => !m.error);
+  const list = pending.length ? pending.map(d => {
+    const live = liveNow(d.id);
+    return '<div class="d" data-id="' + esc(d.id) + '">' +
+      (live ? '<span class="lv lv-ok">Live</span>' : '<span class="lv lv-warn">Waiting</span>') +
+      '<strong>' + esc(d.market) + '</strong> ' + esc(d.pest) + (d.area ? ' in ' + esc(d.area) : '') +
+      (d.title ? ' &middot; ' + esc(d.title) : '') +
+      '<span class="detail">' + (d.writtenWeek ? ' written week of ' + esc(fmtDay(d.writtenWeek)) : '') + '</span>' +
+      (live ? ' <a href="' + esc(live.url) + '" target="_blank" rel="noopener">open</a>' : '') +
+      '<button class="btn quiet" type="button" data-d="remove">Remove</button></div>';
+  }).join('') : '<p class="detail">Nothing logged. Add anything you wrote that is not on the site yet, so the planner stops suggesting it.</p>';
+
+  const first = msMarkets[0] || { pestList: [], areas: [] };
+  return '<div class="drafts"><h4>Blogs written, not published yet</h4>' + list +
+    '<div class="form">' +
+      '<select data-d="market">' + msMarkets.map(m => '<option>' + esc(m.market) + '</option>').join('') + '</select>' +
+      '<select data-d="pest">' + (first.pestList || []).map(p => '<option>' + esc(p) + '</option>').join('') + '</select>' +
+      '<select data-d="area">' + (first.areas || []).map(x => '<option>' + esc(x) + '</option>').join('') + '</select>' +
+      '<input type="text" data-d="title" placeholder="Title (optional)" size="26">' +
+      '<button class="btn" type="button" data-d="add">Add draft</button>' +
+    '</div></div>';
+}
+
+function bindDrafts() {
+  const box = $('auditBox');
+  const mSel = box.querySelector('[data-d="market"]');
+  const pSel = box.querySelector('[data-d="pest"]');
+  const aSel = box.querySelector('[data-d="area"]');
+  const fill = () => {
+    const m = plan.markets.find(x => x.market === mSel.value) || {};
+    pSel.innerHTML = (m.pestList || []).map(p => '<option>' + esc(p) + '</option>').join('');
+    aSel.innerHTML = (m.areas || []).map(x => '<option>' + esc(x) + '</option>').join('');
+  };
+  if (mSel) { mSel.onchange = fill; fill(); }
+  const addBtn = box.querySelector('[data-d="add"]');
+  if (addBtn) addBtn.onclick = () => {
+    decisions.pending = decisions.pending || [];
+    decisions.pending.push({
+      id: 'd' + Date.now(), market: mSel.value, pest: pSel.value, area: aSel.value,
+      title: box.querySelector('[data-d="title"]').value.trim(), writtenWeek: plan.weekOf
+    });
+    scheduleSave();
+    copyToast('Draft logged. Rebuild to keep it out of next week\'s picks.');
+    rerender();
+  };
+  box.querySelectorAll('.d').forEach(el => {
+    el.querySelector('[data-d="remove"]').onclick = () => {
+      decisions.pending = (decisions.pending || []).filter(x => x.id !== el.getAttribute('data-id'));
+      scheduleSave(); rerender();
+    };
+  });
+}
+
 /* ================= RENDER ================= */
 function render() {
   $('weekTitle').textContent = 'Week of ' + fmtDay(plan.weekOf);
@@ -903,6 +995,7 @@ function render() {
     $('markets').innerHTML = brandMarkets().map(renderServiceMarket).join('');
   }
   bindMarkets();
+  renderAudit();
   renderSettings();
 
   const fc = plan.falconCheck;
