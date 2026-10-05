@@ -601,7 +601,8 @@ function settingsFor(b, market) {
   return {
     areas: s.areas && s.areas[b] && s.areas[b][market],
     unverified: !!(s.unverified && s.unverified[b] && s.unverified[b][market]),
-    photosOnly: (s.photosOnly && s.photosOnly[b] && market in s.photosOnly[b]) ? !!s.photosOnly[b][market] : undefined
+    photosOnly: (s.photosOnly && s.photosOnly[b] && market in s.photosOnly[b]) ? !!s.photosOnly[b][market] : undefined,
+    allowUntracked: !!(s.allowUntracked && s.allowUntracked[b] && s.allowUntracked[b][market])
   };
 }
 
@@ -619,11 +620,13 @@ function renderSettings() {
         '<span style="display:flex;gap:14px;flex-wrap:wrap">' +
         (brand !== 'ms' ? '<label class="chk"><input type="checkbox" data-f="photos"' +
           ((cur.photosOnly === undefined ? m.photosDefault : cur.photosOnly) ? ' checked' : '') + '> Photos only</label>' : '') +
-        '<label class="chk"><input type="checkbox" data-f="verified"' + (cur.unverified ? '' : ' checked') + '> Verified on Google</label></span></div>';
+        '<label class="chk"><input type="checkbox" data-f="verified"' + (cur.unverified ? '' : ' checked') + '> Verified on Google</label>' +
+        '<label class="chk"><input type="checkbox" data-f="untracked"' + (cur.allowUntracked ? ' checked' : '') + '> Untracked topics OK</label></span></div>';
     }).join('') +
     '<div class="controls" style="margin-top:12px"><button class="btn primary" type="button" id="saveSettings">Save settings</button>' +
       (brand !== 'ms' ? '<button class="btn" type="button" id="allPhotos">Photos only for every market</button>' : '') + '</div>' +
     (brand !== 'ms' ? '<p class="hint">"Photos only" swaps that market\'s two GBP posts for two photo tags a week, picked from in-season services with the weakest Falcon keywords.</p>' : '') +
+    '<p class="hint">"Untracked topics OK" lets the Falcon post fall back to a seasonal topic you do not track in Local Falcon. Off by default, so posts stay on keywords you measure.</p>' +
     '<p class="hint">Second box: the booking link for the Falcon post\'s "Book" button. Leave it empty to use the market\'s home page' + (brand === 'ls' ? ' (Lawn Squad has no market home page, so add one per market)' : '') + '.</p>' +
     '<p class="hint">Areas are comma-separated. Unchecking "Verified on Google" pauses GBP picks for that market and keeps its Falcon numbers out of the scoring until you check it again.</p>' +
     '</div></details>';
@@ -637,8 +640,8 @@ function renderSettings() {
   $('saveSettings').onclick = () => {
     decisions.settings = decisions.settings || {};
     const s = decisions.settings;
-    s.areas = s.areas || {}; s.unverified = s.unverified || {}; s.photosOnly = s.photosOnly || {};
-    s.areas[brand] = s.areas[brand] || {}; s.unverified[brand] = s.unverified[brand] || {}; s.photosOnly[brand] = s.photosOnly[brand] || {};
+    s.areas = s.areas || {}; s.unverified = s.unverified || {}; s.photosOnly = s.photosOnly || {}; s.allowUntracked = s.allowUntracked || {};
+    s.areas[brand] = s.areas[brand] || {}; s.unverified[brand] = s.unverified[brand] || {}; s.photosOnly[brand] = s.photosOnly[brand] || {}; s.allowUntracked[brand] = s.allowUntracked[brand] || {};
     document.querySelectorAll('#settingsBox .srow').forEach(row => {
       const name = row.getAttribute('data-m');
       s.bookLinks = s.bookLinks || {}; s.bookLinks[brand] = s.bookLinks[brand] || {};
@@ -653,6 +656,8 @@ function renderSettings() {
       else if (!vals.length) delete s.areas[brand][name];
       if (row.querySelector('input[data-f="verified"]').checked) delete s.unverified[brand][name];
       else s.unverified[brand][name] = true;
+      const ut = row.querySelector('input[data-f="untracked"]');
+      if (ut) { if (ut.checked) s.allowUntracked[brand][name] = true; else delete s.allowUntracked[brand][name]; }
       const ph = row.querySelector('input[data-f="photos"]');
       if (ph) s.photosOnly[brand][name] = ph.checked;   // stored either way, so a market's default can be overridden
     });
@@ -879,6 +884,7 @@ function renderGbp(m, solo) {
       '<p class="gtitle">' + esc(g.pest === 'General pest' ? 'General pest control' : g.pest) + ' in ' + esc(g.area) + '</p>' +
       '<p class="gsub">' + esc((g.why || []).join(' ')) + '</p>' +
       (g.angleOffSeason ? '<p class="caution">The calendar angle for this one is written for another season. Write it for right now.</p>' : '') +
+      (g.untracked ? '<p class="caution">No Local Falcon keyword tracks this topic, so nothing here is being measured. Add a keyword in Local Falcon, or turn off "Untracked topics OK" for this market in settings.</p>' : '') +
       (tr ? '<p class="track">Targeted since ' + esc(fmtDay(tr.firstWeek)) + ' (' + tr.times + ' week' + (tr.times === 1 ? '' : 's') + '): SoLV ' +
         esc(tr.solvThen == null ? '?' : tr.solvThen) + '% then, ' + esc(tr.solvNow == null ? '?' : tr.solvNow) + '% now.</p>' : '') +
       renderPhoto(m, 2) +
