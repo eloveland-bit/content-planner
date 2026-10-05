@@ -139,7 +139,12 @@ details ul { margin: 0; padding-left: 18px; }
 .market .gbp.solo { margin-top: 0; padding-top: 0; border-top: 0; }
 .wait { background: var(--slate-soft); border-radius: 8px; padding: 12px 14px; font-size: 15px; max-width: 72ch; }
 .settings { margin-top: 36px; max-width: none; }
-.settings .srow { display: grid; grid-template-columns: 140px 1.2fr 1.2fr 1fr auto; gap: 10px 14px; align-items: center; padding: 8px 0; border-top: 1px solid var(--rule); }
+.settings .srow { padding: 12px 0; border-top: 1px solid var(--rule); }
+.settings .srow > strong { display: block; margin-bottom: 8px; font-size: 16px; }
+.settings .fields { display: flex; gap: 12px 18px; flex-wrap: wrap; align-items: flex-end; }
+.settings .f { display: flex; flex-direction: column; gap: 4px; flex: 1 1 240px; min-width: 200px; }
+.settings .f span { font-size: 12px; color: var(--muted); }
+.settings .checks2 { display: flex; gap: 16px; flex-wrap: wrap; align-items: center; }
 .settings .srow:first-of-type { border-top: 0; }
 .settings input[type="text"] { width: 100%; border: 1px solid var(--rule); background: var(--paper); border-radius: 6px; padding: 6px 10px; font-size: 14px; }
 .settings label.chk { display: flex; gap: 6px; align-items: center; font-size: 14px; white-space: nowrap; }
@@ -587,11 +592,14 @@ document.querySelectorAll('#brandTabs button').forEach(b => {
 
 // Booking link for the "Book" button on the Falcon post: set per market in settings,
 // otherwise the market's home page for Mosquito Squad and New Age Lights
-function bookLink(m) {
+function bookLink(m, area) {
   const s = decisions.settings || {};
   const b = m.brand || 'ms';
   const set = s.bookLinks && s.bookLinks[b] && s.bookLinks[b][m.market];
-  if (set) return set;
+  const slug = (area || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  if (set) return set.replace(/\{area\}/g, slug);
+  const g = m.gbp && m.gbp.post2;
+  if (g && g.bookLink) return g.bookLink;   // the area's own service page, checked by the backend
   if (b !== 'ls' && m.blogIndex) return m.blogIndex.replace(/\/blog\/?$/, '/');
   return '';
 }
@@ -616,21 +624,28 @@ function renderSettings() {
       const cur = settingsFor(brand, m.market);
       const areas = (cur.areas && cur.areas.length ? cur.areas : (m.areas || [])).join(', ');
       return '<div class="srow" data-m="' + esc(m.market) + '"><strong>' + esc(m.market) + '</strong>' +
-        '<input type="text" value="' + esc(areas) + '" aria-label="Areas for ' + esc(m.market) + '" placeholder="Comma-separated areas">' +
-        '<input type="text" data-f="kw" value="' + esc((cur.keywords || []).join(', ')) + '" aria-label="Keywords for ' + esc(m.market) + '" placeholder="Keywords you track (optional)">' +
-        '<input type="text" data-f="book" value="' + esc(((decisions.settings || {}).bookLinks || {})[brand] && decisions.settings.bookLinks[brand][m.market] || '') + '" aria-label="Booking link for ' + esc(m.market) + '" placeholder="' + esc(bookLink(m) || 'Booking link (https://...)') + '">' +
-        '<span style="display:flex;gap:14px;flex-wrap:wrap">' +
-        (brand !== 'ms' ? '<label class="chk"><input type="checkbox" data-f="photos"' +
-          ((cur.photosOnly === undefined ? m.photosDefault : cur.photosOnly) ? ' checked' : '') + '> Photos only</label>' : '') +
-        '<label class="chk"><input type="checkbox" data-f="verified"' + (cur.unverified ? '' : ' checked') + '> Verified on Google</label>' +
-        '<label class="chk"><input type="checkbox" data-f="untracked"' + (cur.allowUntracked ? ' checked' : '') + '> Untracked topics OK</label></span></div>';
+        '<div class="fields">' +
+          '<label class="f"><span>Focus areas (comma separated)</span>' +
+            '<input type="text" value="' + esc(areas) + '" placeholder="Area, Area, Area"></label>' +
+          '<label class="f"><span>Keywords you track (optional)</span>' +
+            '<input type="text" data-f="kw" value="' + esc((cur.keywords || []).join(', ')) + '" placeholder="mosquito control, tick control"></label>' +
+          '<label class="f"><span>Booking link (optional, {area} allowed)</span>' +
+            '<input type="text" data-f="book" value="' + esc(((decisions.settings || {}).bookLinks || {})[brand] && decisions.settings.bookLinks[brand][m.market] || '') +
+            '" placeholder="' + esc(bookLink(m) || 'https://...') + '"></label>' +
+          '<div class="checks2">' +
+            (brand !== 'ms' ? '<label class="chk"><input type="checkbox" data-f="photos"' +
+              ((cur.photosOnly === undefined ? m.photosDefault : cur.photosOnly) ? ' checked' : '') + '> Photos only</label>' : '') +
+            '<label class="chk"><input type="checkbox" data-f="verified"' + (cur.unverified ? '' : ' checked') + '> Verified on Google</label>' +
+            '<label class="chk"><input type="checkbox" data-f="untracked"' + (cur.allowUntracked ? ' checked' : '') + '> Untracked topics OK</label>' +
+          '</div>' +
+        '</div></div>';
     }).join('') +
     '<div class="controls" style="margin-top:12px"><button class="btn primary" type="button" id="saveSettings">Save settings</button>' +
       (brand !== 'ms' ? '<button class="btn" type="button" id="allPhotos">Photos only for every market</button>' : '') + '</div>' +
     (brand !== 'ms' ? '<p class="hint">"Photos only" swaps that market\'s two GBP posts for two photo tags a week, picked from in-season services with the weakest Falcon keywords.</p>' : '') +
     '<p class="hint">Keywords box: list the keywords you actually run for that market, comma separated, and the Falcon post will only target those. Leave it empty to use every keyword on the profile.</p>' +
     '<p class="hint">"Untracked topics OK" lets the Falcon post fall back to a seasonal topic you do not track in Local Falcon. Off by default, so posts stay on keywords you measure.</p>' +
-    '<p class="hint">Second box: the booking link for the Falcon post\'s "Book" button. Leave it empty to use the market\'s home page' + (brand === 'ls' ? ' (Lawn Squad has no market home page, so add one per market)' : '') + '.</p>' +
+    '<p class="hint">Booking link: leave it empty and each post links to that area\'s own service page, with the market page as a fallback when the area has none. Set your own and you can use {area} as a placeholder.</p>' +
     '<p class="hint">Areas are comma-separated. Unchecking "Verified on Google" pauses GBP picks for that market and keeps its Falcon numbers out of the scoring until you check it again.</p>' +
     '</div></details>';
   const allBtn = $('allPhotos');
@@ -828,7 +843,7 @@ function gbpBrief2(m, g) {
   return 'GBP post, ' + BRAND_NAMES[m.brand || 'ms'] + ' ' + m.market + ': ' + g.words + ' in ' + g.area + '.' +
     (g.keyword ? ' Target keyword: ' + g.keyword + (g.solv != null ? ' (SoLV ' + g.solv + '%)' : '') + '.' : '') +
     (g.angle ? ' Angle: ' + g.angle : '') + photoLine(m, 2) + ' Photo tag: ' + ((curPhoto(m, 2) || g).photoTag) +
-    (bookLink(m) ? ' Book link: ' + bookLink(m) : '');
+    (bookLink(m, g.area) ? ' Book link: ' + bookLink(m, g.area) : '');
 }
 function gbpBriefs(m) {
   if (!m.gbp || m.gbp.waiting) return [];
@@ -896,7 +911,7 @@ function renderGbp(m, solo) {
       renderPhoto(m, 2) +
       '<span class="tagline">' + esc((curPhoto(m, 2) || g).photoTag) + '</span>' +
       '<div class="controls"><button class="btn" type="button" data-act="g2copy">Copy brief</button>' +
-      '<button class="btn" type="button" data-act="g2book"' + (bookLink(m) ? '' : ' title="Add a booking link in the settings below"') + '>' + (bookLink(m) ? 'Copy book link' : 'Add book link in settings') + '</button>' +
+      '<button class="btn" type="button" data-act="g2book">' + (g.bookLinkIsArea ? 'Copy ' + esc(g.area) + ' page link' : 'Copy book link') + '</button>' +
       '<button class="btn" type="button" data-act="g2tag">Copy photo tag</button>' +
       '<button class="btn" type="button" data-act="g2done" aria-pressed="' + done + '">' + (done ? 'Posted' : 'Mark posted') + '</button></div>' +
       '</div></div>';
@@ -1124,8 +1139,8 @@ function bindMarkets() {
         markPhotoUse(ph, m, 't' + i, !photoUses.used[ph.id]); return rerender();
       }
       if (act === 'g2book') {
-        if (!bookLink(m)) { const d = document.querySelector('#settingsBox details'); if (d) { d.open = true; d.scrollIntoView({ behavior: 'smooth' }); } return; }
-        return copy(bookLink(m), 'Book link copied');
+        if (!bookLink(m, m.gbp.post2 && m.gbp.post2.area)) { const d = document.querySelector('#settingsBox details'); if (d) { d.open = true; d.scrollIntoView({ behavior: 'smooth' }); } return; }
+        return copy(bookLink(m, m.gbp.post2 && m.gbp.post2.area), 'Book link copied');
       }
       if (act === 'g1link') {
         const p = gbpPost1(m);
