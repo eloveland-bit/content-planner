@@ -1031,8 +1031,9 @@ function renderMarket(m) {
     const bits = [];
     if (info.samePest) bits.push(info.samePest + ' post' + (info.samePest === 1 ? '' : 's') + ' on this pest');
     else bits.push('nothing on this pest');
+    if (info.avgRank !== null && info.avgRank !== undefined) bits.push('grid rank ' + info.avgRank + ' on ' + info.pins + ' pins');
+    else bits.push('not scored, too few pins');
     if (info.usedRecently) bits.push('used in the last 4 weeks');
-    else if (!info.anyPosts) bits.push('no posts at all yet');
     return a + ' (' + bits.join(', ') + ')';
   };
   const picked = areaInfo[c.area];
