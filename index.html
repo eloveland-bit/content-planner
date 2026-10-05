@@ -139,7 +139,7 @@ details ul { margin: 0; padding-left: 18px; }
 .market .gbp.solo { margin-top: 0; padding-top: 0; border-top: 0; }
 .wait { background: var(--slate-soft); border-radius: 8px; padding: 12px 14px; font-size: 15px; max-width: 72ch; }
 .settings { margin-top: 36px; max-width: none; }
-.settings .srow { display: grid; grid-template-columns: 150px 1.3fr 1fr auto; gap: 10px 14px; align-items: center; padding: 8px 0; border-top: 1px solid var(--rule); }
+.settings .srow { display: grid; grid-template-columns: 140px 1.2fr 1.2fr 1fr auto; gap: 10px 14px; align-items: center; padding: 8px 0; border-top: 1px solid var(--rule); }
 .settings .srow:first-of-type { border-top: 0; }
 .settings input[type="text"] { width: 100%; border: 1px solid var(--rule); background: var(--paper); border-radius: 6px; padding: 6px 10px; font-size: 14px; }
 .settings label.chk { display: flex; gap: 6px; align-items: center; font-size: 14px; white-space: nowrap; }
@@ -602,7 +602,8 @@ function settingsFor(b, market) {
     areas: s.areas && s.areas[b] && s.areas[b][market],
     unverified: !!(s.unverified && s.unverified[b] && s.unverified[b][market]),
     photosOnly: (s.photosOnly && s.photosOnly[b] && market in s.photosOnly[b]) ? !!s.photosOnly[b][market] : undefined,
-    allowUntracked: !!(s.allowUntracked && s.allowUntracked[b] && s.allowUntracked[b][market])
+    allowUntracked: !!(s.allowUntracked && s.allowUntracked[b] && s.allowUntracked[b][market]),
+    keywords: (s.keywords && s.keywords[b] && s.keywords[b][market]) || null
   };
 }
 
@@ -616,6 +617,7 @@ function renderSettings() {
       const areas = (cur.areas && cur.areas.length ? cur.areas : (m.areas || [])).join(', ');
       return '<div class="srow" data-m="' + esc(m.market) + '"><strong>' + esc(m.market) + '</strong>' +
         '<input type="text" value="' + esc(areas) + '" aria-label="Areas for ' + esc(m.market) + '" placeholder="Comma-separated areas">' +
+        '<input type="text" data-f="kw" value="' + esc((cur.keywords || []).join(', ')) + '" aria-label="Keywords for ' + esc(m.market) + '" placeholder="Keywords you track (optional)">' +
         '<input type="text" data-f="book" value="' + esc(((decisions.settings || {}).bookLinks || {})[brand] && decisions.settings.bookLinks[brand][m.market] || '') + '" aria-label="Booking link for ' + esc(m.market) + '" placeholder="' + esc(bookLink(m) || 'Booking link (https://...)') + '">' +
         '<span style="display:flex;gap:14px;flex-wrap:wrap">' +
         (brand !== 'ms' ? '<label class="chk"><input type="checkbox" data-f="photos"' +
@@ -626,6 +628,7 @@ function renderSettings() {
     '<div class="controls" style="margin-top:12px"><button class="btn primary" type="button" id="saveSettings">Save settings</button>' +
       (brand !== 'ms' ? '<button class="btn" type="button" id="allPhotos">Photos only for every market</button>' : '') + '</div>' +
     (brand !== 'ms' ? '<p class="hint">"Photos only" swaps that market\'s two GBP posts for two photo tags a week, picked from in-season services with the weakest Falcon keywords.</p>' : '') +
+    '<p class="hint">Keywords box: list the keywords you actually run for that market, comma separated, and the Falcon post will only target those. Leave it empty to use every keyword on the profile.</p>' +
     '<p class="hint">"Untracked topics OK" lets the Falcon post fall back to a seasonal topic you do not track in Local Falcon. Off by default, so posts stay on keywords you measure.</p>' +
     '<p class="hint">Second box: the booking link for the Falcon post\'s "Book" button. Leave it empty to use the market\'s home page' + (brand === 'ls' ? ' (Lawn Squad has no market home page, so add one per market)' : '') + '.</p>' +
     '<p class="hint">Areas are comma-separated. Unchecking "Verified on Google" pauses GBP picks for that market and keeps its Falcon numbers out of the scoring until you check it again.</p>' +
@@ -640,11 +643,13 @@ function renderSettings() {
   $('saveSettings').onclick = () => {
     decisions.settings = decisions.settings || {};
     const s = decisions.settings;
-    s.areas = s.areas || {}; s.unverified = s.unverified || {}; s.photosOnly = s.photosOnly || {}; s.allowUntracked = s.allowUntracked || {};
-    s.areas[brand] = s.areas[brand] || {}; s.unverified[brand] = s.unverified[brand] || {}; s.photosOnly[brand] = s.photosOnly[brand] || {}; s.allowUntracked[brand] = s.allowUntracked[brand] || {};
+    s.areas = s.areas || {}; s.unverified = s.unverified || {}; s.photosOnly = s.photosOnly || {}; s.allowUntracked = s.allowUntracked || {}; s.keywords = s.keywords || {};
+    s.areas[brand] = s.areas[brand] || {}; s.unverified[brand] = s.unverified[brand] || {}; s.photosOnly[brand] = s.photosOnly[brand] || {}; s.allowUntracked[brand] = s.allowUntracked[brand] || {}; s.keywords[brand] = s.keywords[brand] || {};
     document.querySelectorAll('#settingsBox .srow').forEach(row => {
       const name = row.getAttribute('data-m');
       s.bookLinks = s.bookLinks || {}; s.bookLinks[brand] = s.bookLinks[brand] || {};
+      const kws = row.querySelector('input[data-f="kw"]').value.split(',').map(x => x.trim()).filter(Boolean);
+      if (kws.length) s.keywords[brand][name] = kws; else delete s.keywords[brand][name];
       const bk = row.querySelector('input[data-f="book"]').value.trim();
       if (bk) s.bookLinks[brand][name] = bk; else delete s.bookLinks[brand][name];
       const vals = row.querySelector('input[type="text"]').value.split(',').map(x => x.trim()).filter(Boolean);
@@ -884,6 +889,7 @@ function renderGbp(m, solo) {
       '<p class="gtitle">' + esc(g.pest === 'General pest' ? 'General pest control' : g.pest) + ' in ' + esc(g.area) + '</p>' +
       '<p class="gsub">' + esc((g.why || []).join(' ')) + '</p>' +
       (g.angleOffSeason ? '<p class="caution">The calendar angle for this one is written for another season. Write it for right now.</p>' : '') +
+      (g.trackerWarning ? '<p class="caution">' + esc(g.trackerWarning) + '</p>' : '') +
       (g.untracked ? '<p class="caution">No Local Falcon keyword tracks this topic, so nothing here is being measured. Add a keyword in Local Falcon, or turn off "Untracked topics OK" for this market in settings.</p>' : '') +
       (tr ? '<p class="track">Targeted since ' + esc(fmtDay(tr.firstWeek)) + ' (' + tr.times + ' week' + (tr.times === 1 ? '' : 's') + '): SoLV ' +
         esc(tr.solvThen == null ? '?' : tr.solvThen) + '% then, ' + esc(tr.solvNow == null ? '?' : tr.solvNow) + '% now.</p>' : '') +
@@ -1039,7 +1045,8 @@ function renderMarket(m) {
     else bits.push('nothing on this pest');
     if (info.avgRank !== null && info.avgRank !== undefined) bits.push('grid rank ' + info.avgRank + ' on ' + info.pins + ' pins');
     else bits.push('not scored, too few pins');
-    if (info.usedRecently) bits.push('used in the last 4 weeks');
+    if ((m.postedAreas || []).indexOf(a) >= 0) bits.push('you posted here in the last 3 weeks');
+    else if (info.usedRecently) bits.push('used in the last 4 weeks');
     return a + ' (' + bits.join(', ') + ')';
   };
   const picked = areaInfo[c.area];
