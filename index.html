@@ -715,6 +715,15 @@ function renderServiceMarket(m) {
       '</div>';
   } else if (m.gbp && m.gbp.waiting) {
     main = '<p class="wait">Waiting on Google verification. No GBP posts are assigned and Falcon numbers are ignored until you check "Verified on Google" in the settings below.</p>';
+  } else if (m.pick) {
+    const c = m.pick;
+    main = '<p class="pick">' + esc(c.pest) + ' in ' + esc(c.area) + '</p>' +
+      '<div class="meta"><span class="tag season">Blog topic</span>' +
+        (c.keywords ? '<span>Primary keyword: ' + esc(c.keywords.primary) + '</span>' : '') + '</div>' +
+      '<ul class="why">' + (c.why || []).map(x => '<li>' + esc(x) + '</li>').join('') + '</ul>' +
+      '<p class="line">' + esc(c.productionLine) + '</p>' +
+      '<div class="controls"><button class="btn" type="button" data-act="bcopy">Copy line</button></div>' +
+      renderGbp(m, false);
   } else main = renderGbp(m, true);
   return '<section class="market" data-market="' + esc(mkey(m)) + '">' + rail + '<div class="main">' + main + '</div></section>';
 }
@@ -1128,6 +1137,7 @@ function bindMarkets() {
       if (!b) return;
       const st = marketState(name);
       const act = b.getAttribute('data-act');
+      if (act === 'bcopy') return copy(m.pick.productionLine, 'Line copied');
       if (act === 'ptag') { const i = Number(b.getAttribute('data-i')); return copy((curPhoto(m, 't' + i) || m.photoTags[i]).photoTag, 'Photo tag copied'); }
       if (act === 'nextPhoto') {
         const slot = b.getAttribute('data-slot'); const sk = /^\d$/.test(slot) ? Number(slot) : slot;
